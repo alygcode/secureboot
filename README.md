@@ -5,7 +5,6 @@ This repository contains documentation and guidelines for managing secure boot c
 ## Documentation
 
 - **[CVE-2023-24932 Mitigation Guide](CVE_2023_24932_MITIGATION_GUIDE.md)** - Critical guidance for mitigating the BlackLotus UEFI bootkit vulnerability and preparing for June 2026 Secure Boot certificate expirations.
-- **[Certificate Update Guide](CERTIFICATE_UPDATE_GUIDE.md)** - Comprehensive guideline for safely updating secure boot certificates including PK, KEK, DB, and DBX.
 
 ## Overview
 
@@ -19,12 +18,6 @@ Secure Boot is a security standard that ensures devices boot using only trusted 
 - [Virtual Machine Considerations](CVE_2023_24932_MITIGATION_GUIDE.md#virtual-machine-considerations)
 - [Windows Server Mitigation](CVE_2023_24932_MITIGATION_GUIDE.md#windows-server-mitigation)
 - [Enterprise Deployment Strategy](CVE_2023_24932_MITIGATION_GUIDE.md#enterprise-deployment-strategy)
-
-### Certificate Management
-- [Understanding Certificate Types](CERTIFICATE_UPDATE_GUIDE.md#certificate-types)
-- [Update Procedures](CERTIFICATE_UPDATE_GUIDE.md#certificate-update-procedures)
-- [Backup and Recovery](CERTIFICATE_UPDATE_GUIDE.md#backup-procedures)
-- [Troubleshooting](CERTIFICATE_UPDATE_GUIDE.md#troubleshooting)
 
 ## Contributing
 
