@@ -54,14 +54,21 @@ Secure Boot uses several types of certificates stored in UEFI firmware variables
 ## Prerequisites
 
 ### Hardware Requirements
-- UEFI firmware with Secure Boot support
+- UEFI firmware with Secure Boot support (UEFI 2.3.1 or later recommended)
 - Access to UEFI/BIOS setup utility
-- USB drive (for certificate files)
+- USB drive (for certificate files and recovery)
+- **Firmware write protection disabled** (check BIOS settings for write-protect jumpers or settings)
 
 ### Software Requirements
-- Certificate generation tools (OpenSSL, sbsigntool, efi-readvar, efi-updatevar)
+- Certificate generation tools (OpenSSL 1.1.1+ or 3.x, sbsigntool, efi-readvar, efi-updatevar)
+- efitools package (version 1.9.2 or later recommended)
 - Root/administrator access
 - Backup storage for current certificates
+
+**Minimum Tool Versions:**
+- OpenSSL: 1.1.1 or later (for modern cryptography support)
+- efitools: 1.9.2 or later
+- sbsigntool: 0.9 or later
 
 ### Knowledge Requirements
 - Understanding of PKI (Public Key Infrastructure)
@@ -74,6 +81,8 @@ Secure Boot uses several types of certificates stored in UEFI firmware variables
 ⚠️ **Always create backups** before making any changes
 ⚠️ **Test procedures** in a non-production environment first
 ⚠️ **Have recovery media** ready before starting
+⚠️ **NEVER manually manipulate EFI variable files** - use proper tools only
+⚠️ **Clearing the Platform Key (PK)** disables Secure Boot and leaves your system vulnerable until reconfigured
 
 ## Backup Procedures
 
@@ -108,11 +117,32 @@ efi-readvar > current_state.txt
 # Check Secure Boot status
 Confirm-SecureBootUEFI
 
-# Note: Windows does not provide direct PowerShell commands to export
-# Secure Boot certificates. Use one of these methods:
-# 1. UEFI firmware interface to export certificates to USB
-# 2. Vendor-specific tools (Dell, HP, Lenovo management software)
-# 3. Boot to Linux and use efitools for backup
+# Windows does not provide native PowerShell commands to export Secure Boot certificates
+# The certificates are stored in UEFI firmware, not in Windows certificate store
+# 
+# Recommended backup methods (in order of preference):
+# 
+# 1. Use UEFI firmware interface:
+#    - Reboot and enter UEFI setup (usually F2, F10, Del, or Esc during boot)
+#    - Navigate to Security -> Secure Boot -> Key Management
+#    - Export each key (PK, KEK, db, dbx) to a USB drive
+#    - Label files clearly with date and key type
+#
+# 2. Use vendor-specific management tools:
+#    - Dell Command | Configure
+#    - HP BIOS Configuration Utility
+#    - Lenovo ThinkPad Setup Utility
+#    - These tools may allow certificate export via Windows
+#
+# 3. Boot to Linux Live USB and use efitools:
+#    - Boot from Ubuntu/Fedora Live USB
+#    - Install efitools: sudo apt-get install efitools
+#    - Follow Linux backup procedure above
+#
+# 4. Document current state (minimum backup):
+#    - Screenshot UEFI Secure Boot key management screens
+#    - Record firmware version and settings
+#    - Note all enrolled certificates and their details
 ```
 
 ### 2. Create Recovery USB
@@ -203,9 +233,12 @@ sudo apt-get install efitools sbsigntool
 ```bash
 # Set variables
 COMMON_NAME="Your Name"
+# GUID is a unique identifier for the certificate owner
 GUID=$(uuidgen)
 
 # Generate PK
+# Note: RSA-2048 is minimum; consider RSA-3072 or RSA-4096 for better security
+# SHA-256 is required minimum (SHA-1 is deprecated and insecure)
 openssl req -new -x509 -newkey rsa:2048 -subj "/CN=$COMMON_NAME PK/" \
     -keyout PK.key -out PK.crt -days 3650 -nodes -sha256
 
@@ -237,14 +270,17 @@ sudo efi-updatevar -f KEK.auth KEK
 sudo efi-updatevar -f PK.auth PK
 
 # Method B: Using mokutil (for MOK - Machine Owner Key)
+# Note: MOK (Machine Owner Key) is different from standard UEFI Secure Boot
+# MOK is used with the shim bootloader (common on Linux distributions)
+# This is for supplemental keys, not replacing PK/KEK/db/dbx
 sudo mokutil --import db.crt
 # Reboot and complete MOK enrollment in firmware
 
-# Method C: Manual file placement (for some firmware - ADVANCED)
-# WARNING: This method is dangerous and system-specific
-# Replace [GUID] with actual GUID: 8be4df61-93ca-11d2-aa0d-00e098032b8c for db
-# Example: db-8be4df61-93ca-11d2-aa0d-00e098032b8c
-# This method is NOT recommended - use Method A or B instead
+# Method C: Manual file placement - ⚠️ EXTREMELY DANGEROUS - DO NOT USE ⚠️
+# This method involves directly manipulating EFI variable files and can BRICK your system.
+# It is system-specific, unreliable, and can cause permanent damage.
+# This method is included only for historical reference - NEVER use it.
+# ALWAYS use Method A (efi-updatevar) or Method B (mokutil) instead.
 ```
 
 #### Append to Existing Database
@@ -290,6 +326,14 @@ efi-readvar
 
 # Verify specific certificate
 efi-readvar -v db
+
+# Check Setup Mode (should be 0x00 for User Mode after successful PK enrollment)
+efi-readvar -v SetupMode
+
+# Verify certificate count and details
+efi-readvar -v PK | grep -A 5 "Variable PK"
+efi-readvar -v KEK | grep -A 5 "Variable KEK"
+efi-readvar -v db | grep -c "List" # Count of db entries
 ```
 
 #### Windows
@@ -359,38 +403,54 @@ efi-readvar -v db
 # Navigate to backup directory
 cd ~/secureboot-backup/[date]
 
-# Restore certificates (requires Setup Mode or signed .auth files)
-# If you have .auth (signed) files:
+# Option A: If you have .auth (signed) files - works in any mode
 sudo efi-updatevar -f PK.auth PK
 sudo efi-updatevar -f KEK.auth KEK
 sudo efi-updatevar -f db.auth db
 sudo efi-updatevar -f dbx.auth dbx
 
-# If you only have .esl files, first enter Setup Mode by clearing PK
-sudo efi-updatevar -c PK  # Or use firmware interface to clear PK
-# Then restore with .esl files
-sudo efi-updatevar -f PK.esl PK
-sudo efi-updatevar -f KEK.esl KEK
+# Option B: If you only have .esl files - REQUIRES SETUP MODE
+# WARNING: First clear PK to enter Setup Mode (this disables Secure Boot temporarily)
+sudo efi-updatevar -c PK
+# System is now in Setup Mode with Secure Boot disabled
+# Restore certificates using .esl files:
 sudo efi-updatevar -f db.esl db
 sudo efi-updatevar -f dbx.esl dbx
+sudo efi-updatevar -f KEK.esl KEK
+sudo efi-updatevar -f PK.esl PK  # PK must be enrolled last to exit Setup Mode
 ```
 
 ### Scenario 3: Complete Reset
 
 ```bash
+# WARNING: Clearing PK disables Secure Boot and enters Setup Mode
+# Your system will be vulnerable until new certificates are enrolled
+# Only do this if you have backup certificates ready to re-enroll immediately
+
 # Enter Setup Mode by clearing PK
-# Method 1: Using efi-updatevar (if supported)
+# Method 1: Using efi-updatevar (if supported by your firmware)
 sudo efi-updatevar -c PK
 
-# Method 2: If -c flag not available, try alternative
-# WARNING: /dev/null method is implementation-dependent
-# Prefer using firmware interface to clear PK
-
-# Note: Some systems require using firmware setup to delete PK
+# Method 2: Using firmware setup (RECOMMENDED)
+# Reboot and enter UEFI setup
 # Navigate to: Security -> Secure Boot -> Clear All Keys
+# This is safer as firmware handles the operation
+
+# After clearing PK:
+# - System is in Setup Mode (SetupMode=1)
+# - Secure Boot is disabled
+# - You can now enroll new certificates without signatures
+# - Re-enroll certificates immediately to restore security
 
 # Restore factory default certificates
-# Usually available from firmware setup or manufacturer website
+# Option 1: From firmware setup (most reliable)
+# Many systems have "Restore Factory Keys" option in UEFI setup
+
+# Option 2: Download from manufacturer
+# Dell: https://www.dell.com/support
+# HP: https://support.hp.com
+# Lenovo: https://support.lenovo.com
+# Look for "Secure Boot Certificates" or "UEFI Keys"
 ```
 
 ### Emergency Recovery
@@ -417,6 +477,14 @@ If system is completely unbootable:
 
 ## Security Best Practices
 
+### Critical Security Considerations
+
+**Before Making Any Changes:**
+1. **BitLocker/LUKS Users**: Suspend BitLocker or backup LUKS recovery keys - certificate changes affect TPM PCR values
+2. **Production Systems**: NEVER perform updates on production systems without testing in identical hardware first
+3. **Backup Everything**: Store backups on external media, not just on the system being modified
+4. **Recovery Plan**: Have bootable recovery USB ready with certificate backups and tools
+
 ### Key Management
 
 1. **Private Key Security**
@@ -428,8 +496,10 @@ If system is completely unbootable:
 2. **Certificate Lifecycle**
    - Document all certificates and their purposes
    - Set appropriate expiration dates (5-10 years typical)
-   - Plan for certificate renewal before expiration
+   - Plan for certificate renewal **at least 6 months** before expiration
    - Maintain certificate inventory
+   - **Certificate expiration behavior**: Expired certificates may still work (firmware doesn't always check expiration) but should be renewed for compliance and security
+   - **Vendor certificates**: Consider keeping Microsoft, Canonical, and Red Hat certificates in db for compatibility unless you have specific security requirements to remove them
 
 3. **Access Control**
    - Limit who can update Secure Boot certificates
@@ -508,22 +578,32 @@ journalctl | grep -i "verification\|signature"
 
 **Diagnosis:**
 - Check if Secure Boot is in Setup Mode (required for unsigned updates)
-- Verify update is properly signed
+- Verify update is properly signed (for authenticated updates)
 - Check firmware write protection settings
+- Verify firmware is not locked by supervisor password
 
 **Solutions:**
 ```bash
 # Check current mode
 efi-readvar -v SetupMode
+# If SetupMode shows 0x01, system is in Setup Mode (unsigned updates allowed)
+# If SetupMode shows 0x00, system is in User Mode (only signed updates allowed)
 
-# If not in Setup Mode, clear PK to enter Setup Mode
-# Method 1: Use clear command (preferred)
+# To enter Setup Mode, clear PK (WARNING: disables Secure Boot)
+# Method 1: Use clear command (preferred if supported)
 sudo efi-updatevar -c PK
 
-# Method 2: Use firmware interface
+# Method 2: Use firmware interface (most reliable)
 # Reboot -> UEFI Setup -> Security -> Secure Boot -> Clear All Keys
 
-# Re-enroll certificates after entering Setup Mode
+# After entering Setup Mode:
+# - Re-enroll certificates immediately
+# - Enroll PK last to exit Setup Mode and re-enable Secure Boot
+
+# Check for firmware write protection:
+# - Some systems have physical jumpers or switches
+# - Some have BIOS settings for "Flash BIOS Protection"
+# - Check manufacturer documentation for your specific system
 ```
 
 #### Issue 3: Certificate Chain Errors
@@ -662,11 +742,35 @@ dmesg | grep -i "secure\|efi"
 
 - **UEFI**: Unified Extensible Firmware Interface
 - **PKI**: Public Key Infrastructure
-- **MOK**: Machine Owner Key
-- **Shim**: First-stage bootloader for Secure Boot
-- **TPM**: Trusted Platform Module
-- **PCR**: Platform Configuration Register
+- **MOK**: Machine Owner Key (used with shim bootloader, separate from standard Secure Boot)
+- **Shim**: First-stage bootloader for Secure Boot (used by most Linux distributions)
+- **TPM**: Trusted Platform Module (cryptographic coprocessor)
+- **PCR**: Platform Configuration Register (TPM measurement storage)
 - **ESP**: EFI System Partition
+- **Setup Mode**: UEFI mode where unsigned certificate updates are allowed (PK is not enrolled)
+- **User Mode**: UEFI mode where only signed certificate updates are allowed (PK is enrolled)
+- **Authenticated Variable**: UEFI variable that requires signed updates
+
+### F. Trusted Platform Module (TPM) Integration
+
+**TPM and Secure Boot Interaction:**
+- Secure Boot and TPM are complementary but independent security features
+- Secure Boot validates firmware and bootloader signatures
+- TPM measures boot components and stores measurements in PCRs
+- Together they provide both verification (Secure Boot) and attestation (TPM)
+
+**PCR Sealing with Secure Boot:**
+- PCR 7 typically contains Secure Boot state and certificate measurements
+- Changing Secure Boot certificates will change PCR 7 values
+- BitLocker, LUKS, and other encryption may seal keys to PCR 7
+- **IMPORTANT**: Before updating Secure Boot certificates, suspend BitLocker or back up LUKS recovery keys
+- After certificate updates, PCR values change and may require re-sealing encrypted volumes
+
+**Best Practices:**
+- Document current PCR values before Secure Boot changes: `tpm2_pcrread sha256`
+- Unseal/backup encryption keys before certificate updates
+- Re-seal encryption keys after successful certificate updates
+- Test TPM-based authentication after Secure Boot changes
 
 ---
 
