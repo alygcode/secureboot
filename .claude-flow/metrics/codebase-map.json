@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-01-28T18:08:38.769Z",
+  "projectRoot": "/home/user/secureboot",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1769623718769
+}

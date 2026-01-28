@@ -1,0 +1,19 @@
+{
+  "tasks": {
+    "task-1769623854321-l5alys": {
+      "taskId": "task-1769623854321-l5alys",
+      "type": "implementation",
+      "description": "Create Linux mitigation procedures for Secure Boot certificate updates",
+      "priority": "normal",
+      "status": "pending",
+      "progress": 0,
+      "assignedTo": [],
+      "tags": [],
+      "createdAt": "2026-01-28T18:10:54.321Z",
+      "startedAt": null,
+      "completedAt": null
+    }
+  },
+  "version": "3.0.0"
+}on": "3.0.0"
+}
