@@ -888,9 +888,6 @@ Get-WmiObject -Class Win32_ComputerSystem | Select-Object Model, Manufacturer
 ### Virtual Machine Documentation
 
 - [Hyper-V Secure Boot](https://docs.microsoft.com/en-us/windows-server/virtualization/hyper-v/learn-more/generation-2-virtual-machine-security-settings-for-hyper-v)
-- [Azure Trusted Launch](https://docs.microsoft.com/en-us/azure/virtual-machines/trusted-launch)
-- [VMware Secure Boot](https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.security.doc/GUID-898217D4-689D-4EB5-866C-888353FE241C.html)
-- [AWS Nitro UEFI Secure Boot](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/uefi-secure-boot.html)
 
 ### Community Resources
 
