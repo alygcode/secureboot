@@ -6,12 +6,13 @@
 3. [How CVE-2023-24932 and Certificate Expiration Are Connected](#how-cve-2023-24932-and-certificate-expiration-are-connected)
 4. [Microsoft's Mitigation Timeline](#microsofts-mitigation-timeline)
 5. [Windows Mitigation Procedures](#windows-mitigation-procedures)
-6. [Linux Mitigation Procedures](#linux-mitigation-procedures)
-7. [Enterprise Deployment Strategy](#enterprise-deployment-strategy)
-8. [Verification and Validation](#verification-and-validation)
-9. [Recovery Procedures](#recovery-procedures)
-10. [Known Issues and Troubleshooting](#known-issues-and-troubleshooting)
-11. [Resources and References](#resources-and-references)
+6. [Virtual Machine Considerations](#virtual-machine-considerations)
+7. [Windows Server Mitigation](#windows-server-mitigation)
+8. [Enterprise Deployment Strategy](#enterprise-deployment-strategy)
+9. [Verification and Validation](#verification-and-validation)
+10. [Recovery Procedures](#recovery-procedures)
+11. [Known Issues and Troubleshooting](#known-issues-and-troubleshooting)
+12. [Resources and References](#resources-and-references)
 
 ---
 
@@ -51,7 +52,7 @@ Microsoft's Secure Boot implementation relies on certificates issued in 2011:
 
 - **Windows Production PCA 2011**: Signs Windows boot managers
 - **KEK CA 2011**: Enables DBX (revocation list) updates
-- **UEFI CA 2011**: Signs third-party boot components (including Linux shim)
+- **UEFI CA 2011**: Signs third-party boot components
 
 These certificates **expire in 2026**. Once expired:
 - Firmware will refuse to load boot components signed with expired certificates
@@ -233,106 +234,284 @@ reagentc /enable
 
 ---
 
-## Linux Mitigation Procedures
+## Virtual Machine Considerations
 
-### Understanding the Linux Boot Chain
+### Hyper-V Virtual Machines
 
-Linux systems using Secure Boot typically follow this chain:
-1. **UEFI Firmware** validates **shim** (signed by Microsoft UEFI CA)
-2. **Shim** validates **GRUB2** (signed by distribution)
-3. **GRUB2** validates **kernel** (signed by distribution)
+#### Secure Boot in Hyper-V Generation 2 VMs
 
-### Certificate Verification
+Hyper-V Generation 2 VMs support UEFI and Secure Boot. The mitigations apply differently based on the VM template:
 
-Check which certificates are enrolled:
-```bash
-# Install efitools if not present
-sudo apt-get install efitools
+| Template | Secure Boot Default | Certificate Authority |
+|----------|---------------------|----------------------|
+| Microsoft Windows | Enabled | Microsoft Windows Production CA 2011 |
+| Microsoft UEFI Certificate Authority | Enabled | Microsoft UEFI CA (for third-party) |
+| Open Source Shielded VM | Enabled | Custom CA |
 
-# Check DB certificates
-mokutil --db
+#### Checking VM Secure Boot Status
 
-# Look for these entries:
-# - "Microsoft Corporation UEFI CA 2011" (legacy)
-# - "Microsoft UEFI CA 2023" (new)
+```powershell
+# On Hyper-V Host
+Get-VMFirmware -VMName "VMName" | Select-Object SecureBoot, SecureBootTemplate
+
+# List all VMs with Secure Boot status
+Get-VM | ForEach-Object {
+    $fw = Get-VMFirmware -VMName $_.Name
+    [PSCustomObject]@{
+        VMName = $_.Name
+        SecureBoot = $fw.SecureBoot
+        Template = $fw.SecureBootTemplate
+    }
+}
 ```
 
-### For Systems with UEFI CA 2023 Only
+#### Applying Mitigations to Hyper-V VMs
 
-Newer hardware (2024+) may only have the 2023 certificate. Verify:
-```bash
-mokutil --db | grep -E "(UEFI CA 2011|UEFI CA 2023)"
+1. **Update the Hyper-V host first** with latest Windows updates
+2. **Update VM firmware** by applying Windows updates inside the VM
+3. **Apply mitigations inside the VM** using the standard procedures
+
+```powershell
+# Inside the VM - Apply Mitigations 1 & 2
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+Restart-Computer
 ```
 
-If only 2023 is present, you need:
-- Updated shim signed with 2023 certificate
-- Check your distribution for updated packages
+#### Hyper-V Host Considerations
 
-### Update Shim and GRUB2
+- Host firmware updates affect all VMs
+- Update Hyper-V host before updating guests
+- Create VM checkpoints before applying mitigations
+- Test on non-production VMs first
 
-#### Ubuntu/Debian
-```bash
-sudo apt update
-sudo apt install --only-upgrade shim-signed grub-efi-amd64-signed
-sudo update-grub
+### VMware Virtual Machines
+
+#### Secure Boot in VMware
+
+VMware supports Secure Boot for VMs with EFI firmware:
+
+| Version | Secure Boot Support |
+|---------|---------------------|
+| vSphere 6.5+ | Supported |
+| Workstation 15+ | Supported |
+| Fusion 11+ | Supported |
+
+#### Checking Secure Boot Status in VMware
+
+```powershell
+# Inside the VM
+Confirm-SecureBootUEFI
+
+# Via PowerCLI on vSphere
+Get-VM "VMName" | Get-AdvancedSetting -Name "firmware" | Select-Object Name, Value
 ```
 
-#### RHEL/CentOS/Fedora
-```bash
-sudo dnf update shim-x64 grub2-efi-x64
-sudo grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+#### VMware Considerations
+
+- VM Hardware version 13+ required for Secure Boot
+- Update VMware Tools after applying mitigations
+- vSphere hosts do not require separate mitigation (hypervisor uses different boot chain)
+- Guest OS mitigations are independent of host
+
+### Azure Virtual Machines
+
+#### Trusted Launch VMs
+
+Azure Trusted Launch VMs support:
+- Secure Boot
+- vTPM (Virtual Trusted Platform Module)
+- Boot integrity attestation
+
+#### Checking Azure VM Secure Boot
+
+```powershell
+# Azure CLI
+az vm show --resource-group MyResourceGroup --name MyVM --query "securityProfile.uefiSettings"
+
+# Azure PowerShell
+Get-AzVM -ResourceGroupName "MyResourceGroup" -Name "MyVM" | Select-Object -ExpandProperty SecurityProfile
 ```
 
-#### openSUSE
-```bash
-sudo zypper update shim grub2-x86_64-efi
-sudo grub2-mkconfig -o /boot/efi/EFI/opensuse/grub.cfg
+#### Applying Mitigations to Azure VMs
+
+1. **Create VM snapshot** before applying mitigations
+2. **Apply Windows updates** to the VM
+3. **Apply mitigations** using standard procedures
+4. **Verify boot attestation** after mitigations
+
+```powershell
+# Inside Azure VM
+# Same mitigation commands as physical machines
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+Restart-Computer
 ```
 
-### Apply DBX Updates Using fwupd
+#### Azure-Specific Considerations
 
-The recommended method for applying DBX updates on Linux:
+- Azure manages firmware updates automatically
+- Boot diagnostics can detect Secure Boot failures
+- Azure Backup recommended before mitigations
+- Test in Azure DevTest Labs first
+
+### AWS Virtual Machines (EC2)
+
+#### Nitro System Secure Boot
+
+AWS Nitro-based instances support UEFI Secure Boot:
+
+| Instance Type | Secure Boot Support |
+|---------------|---------------------|
+| Nitro-based (most current gen) | Supported |
+| Xen-based (older) | Not supported |
+
+#### Enabling Secure Boot on EC2
 
 ```bash
-# Install fwupd
-sudo apt install fwupd  # Debian/Ubuntu
-sudo dnf install fwupd  # Fedora/RHEL
-
-# Check for available updates
-fwupdmgr get-updates
-
-# Apply firmware updates (including DBX)
-fwupdmgr update
-
-# Verify DBX contents
-efi-readvar -v dbx
+# AWS CLI - Create instance with UEFI boot
+aws ec2 run-instances \
+  --image-id ami-xxxxxxxx \
+  --instance-type m5.large \
+  --boot-mode uefi
 ```
 
-**Important**: fwupd checks that your current boot components are not in the DBX before applying updates, preventing boot failures.
+#### EC2 Considerations
 
-### SBAT (Secure Boot Advanced Targeting)
+- Use UEFI-compatible AMIs
+- Create AMI backup before mitigations
+- Windows Server AMIs from AWS Marketplace are pre-configured
+- Apply standard Windows mitigations inside the instance
 
-Modern Linux distributions use SBAT for more flexible revocation:
+---
 
-```bash
-# Check SBAT status
-mokutil --sbat
+## Windows Server Mitigation
 
-# Verify shim SBAT level
-objdump -j .sbat -s /boot/efi/EFI/ubuntu/shimx64.efi
+### Windows Server Version Support
+
+| Server Version | Mitigation Support | Notes |
+|----------------|-------------------|-------|
+| Windows Server 2022 | Full support | Recommended |
+| Windows Server 2019 | Full support | |
+| Windows Server 2016 | Partial support | Some limitations |
+| Windows Server 2012 R2 | Limited | TPM measurement issues |
+| Windows Server 2012 | Limited | TPM 2.0 compatibility issues |
+
+### Known Issues with Older Servers
+
+**Windows Server 2012/2012 R2 with TPM 2.0**:
+- July 2024 updates block Mitigations #2 and #3
+- Due to TPM measurement compatibility issues
+- Wait for firmware updates from hardware vendor
+
+### Server Core Installations
+
+Apply mitigations via command line (no GUI required):
+
+```cmd
+:: Check Secure Boot status
+powershell -Command "Confirm-SecureBootUEFI"
+
+:: Apply Mitigations 1 & 2
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+
+:: Run the scheduled task
+schtasks /Run /TN "\Microsoft\Windows\PI\Secure-Boot-Update"
+
+:: Restart
+shutdown /r /t 60
 ```
 
-### Machine Owner Key (MOK) Management
+### Failover Cluster Considerations
 
-If using custom keys:
-```bash
-# Enroll a MOK
-sudo mokutil --import my-key.der
+For Windows Server Failover Clusters:
 
-# List enrolled MOKs
-mokutil --list-enrolled
+1. **Plan maintenance window** for cluster-wide updates
+2. **Update one node at a time** with proper failover
+3. **Verify cluster health** between node updates
+4. **Apply mitigations in sequence**:
+   - Apply Mitigations 1 & 2 to all nodes first
+   - Verify cluster stability
+   - Then apply Mitigations 3 & 4
 
-# Reboot and complete enrollment in MOK Manager
+```powershell
+# On each cluster node (one at a time)
+# 1. Pause the node
+Suspend-ClusterNode -Name "NodeName" -Drain
+
+# 2. Apply mitigations
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+Restart-Computer
+
+# 3. After restart, resume the node
+Resume-ClusterNode -Name "NodeName"
+
+# 4. Verify cluster health before proceeding to next node
+Get-ClusterNode | Select-Object Name, State
+```
+
+### Hyper-V Host Servers
+
+For Hyper-V hosts running Windows Server:
+
+1. **Schedule maintenance window** for host and VMs
+2. **Migrate VMs** to other hosts or shut down
+3. **Apply host mitigations** first
+4. **Verify host boots properly**
+5. **Then apply mitigations to guest VMs**
+
+```powershell
+# Migrate VMs before host maintenance
+Get-VM | Where-Object State -eq 'Running' | Move-VM -DestinationHost "AlternateHost"
+
+# Or save VM state
+Get-VM | Where-Object State -eq 'Running' | Save-VM
+
+# Apply host mitigations
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+Restart-Computer
+```
+
+### Domain Controller Considerations
+
+For Active Directory Domain Controllers:
+
+1. **Never apply mitigations to all DCs simultaneously**
+2. **Start with one DC** in a non-critical site
+3. **Verify AD replication** after each DC update
+4. **Keep at least one DC untouched** until fully tested
+
+```powershell
+# Verify AD replication health before starting
+repadmin /replsummary
+
+# After applying mitigations, verify replication
+repadmin /showrepl
+dcdiag /v
+```
+
+### SQL Server Considerations
+
+For servers running SQL Server:
+
+1. **Stop SQL services** before applying mitigations
+2. **Verify database integrity** after restart
+3. **Consider AlwaysOn Availability Groups** failover planning
+
+```powershell
+# Stop SQL services
+Stop-Service -Name "MSSQLSERVER"
+Stop-Service -Name "SQLSERVERAGENT"
+
+# Apply mitigations
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x140 /f
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+Restart-Computer
+
+# After restart, verify SQL starts properly
+Get-Service -Name "MSSQLSERVER" | Select-Object Name, Status
 ```
 
 ---
@@ -347,9 +526,11 @@ mokutil --list-enrolled
    - Document all hardware models in environment
    - Identify firmware versions and Secure Boot status
    - Catalog boot media (ISO images, USB drives, PXE servers)
+   - Identify all virtual machine platforms
 
 2. **Lab Testing**
    - Test at least one device of each hardware type
+   - Test each VM platform (Hyper-V, VMware, Azure, etc.)
    - Apply Mitigations 1 and 2 only
    - Document any issues
 
@@ -372,18 +553,21 @@ mokutil --list-enrolled
    - SCCM/ConfigMgr Task Sequences
    - Intune configuration profiles
    - Group Policy with scheduled tasks
+   - Azure Update Management
 
-#### Phase 3: Boot Media Refresh (Weeks 8-16)
+#### Phase 3: Boot Media and Server Refresh (Weeks 8-16)
 
 1. **Update installation media**
    - Download latest Windows ISOs
    - Recreate USB installation drives
    - Update PXE/HTTP boot images
    - Refresh WinRE partitions
+   - Update VM templates
 
 2. **Test updated media**
    - Verify boot on mitigated devices
    - Test recovery scenarios
+   - Test VM deployments
 
 3. **Plan for regular updates**
    - Establish twice-yearly refresh cycle
@@ -394,6 +578,7 @@ mokutil --list-enrolled
 - All boot media updated
 - WinRE updated on all devices
 - Recovery procedures tested
+- All VM templates updated
 
 1. **Deploy to pilot group**
    ```powershell
@@ -483,24 +668,22 @@ $dbx = Get-SecureBootUEFI dbx
 Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" -Name "AvailableUpdates"
 ```
 
-### Linux Verification Commands
+### VM-Specific Verification
 
-```bash
-# 1. Check Secure Boot status
-bootctl status | grep "Secure Boot"
+```powershell
+# Hyper-V VM Verification (run on host)
+Get-VM | ForEach-Object {
+    $fw = Get-VMFirmware -VMName $_.Name
+    [PSCustomObject]@{
+        VMName = $_.Name
+        SecureBoot = $fw.SecureBoot
+        Template = $fw.SecureBootTemplate
+        State = $_.State
+    }
+} | Format-Table
 
-# 2. List all UEFI variables
-efi-readvar
-
-# 3. Check specific databases
-efi-readvar -v db
-efi-readvar -v dbx
-
-# 4. Verify shim signature
-sbverify --list /boot/efi/EFI/ubuntu/shimx64.efi
-
-# 5. Check SBAT status
-mokutil --sbat
+# Inside VM - verify same as physical
+Confirm-SecureBootUEFI
 ```
 
 ### Compliance Reporting
@@ -510,10 +693,12 @@ Create a PowerShell script for fleet-wide reporting:
 ```powershell
 $results = @{
     ComputerName = $env:COMPUTERNAME
+    IsVirtualMachine = (Get-WmiObject -Class Win32_ComputerSystem).Model -match "Virtual|VMware|HVM"
     SecureBootEnabled = Confirm-SecureBootUEFI
     PCA2023Enrolled = ([System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes) -match 'Windows UEFI CA 2023')
     MitigationStatus = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" -Name "AvailableUpdates" -ErrorAction SilentlyContinue).AvailableUpdates
     FirmwareVersion = (Get-WmiObject -Class Win32_BIOS).SMBIOSBIOSVersion
+    OSVersion = (Get-WmiObject -Class Win32_OperatingSystem).Caption
 }
 
 $results | ConvertTo-Json
@@ -551,23 +736,39 @@ This occurs if Mitigation 3 was applied before updating recovery media.
 2. Or temporarily disable Secure Boot to boot old media
 3. Or use vendor recovery partition (if not revoked)
 
-### Scenario 3: Dual-Boot Linux/Windows Broken
+### Scenario 3: VM Won't Boot After Host Mitigation
 
-After Mitigation 3, old Linux boot components may be revoked.
+**Hyper-V**:
+```powershell
+# Disable Secure Boot for the VM
+Set-VMFirmware -VMName "VMName" -EnableSecureBoot Off
 
-**Solution**:
-1. Update Linux shim and GRUB from latest distribution packages
-2. Rebuild GRUB configuration
-3. Verify signatures match enrolled certificates
+# Boot the VM and apply mitigations inside
+Start-VM -VMName "VMName"
 
-```bash
-# Boot with Secure Boot disabled, then:
-sudo apt update
-sudo apt install --reinstall shim-signed grub-efi-amd64-signed
-sudo update-grub
-sudo grub-install --target=x86_64-efi --efi-directory=/boot/efi
-# Re-enable Secure Boot
+# After mitigations applied inside VM, re-enable Secure Boot
+Set-VMFirmware -VMName "VMName" -EnableSecureBoot On
 ```
+
+**VMware**:
+1. Edit VM settings → VM Options → Boot Options
+2. Temporarily disable Secure Boot
+3. Apply mitigations inside VM
+4. Re-enable Secure Boot
+
+### Scenario 4: Cluster Node Won't Boot
+
+1. **Remove node from cluster**
+   ```powershell
+   # From another node
+   Remove-ClusterNode -Name "FailedNode" -Force
+   ```
+
+2. **Recover the node** using recovery media
+3. **Re-add to cluster** after successful boot
+   ```powershell
+   Add-ClusterNode -Name "RecoveredNode" -Cluster "ClusterName"
+   ```
 
 ### Creating Updated Recovery Media
 
@@ -598,6 +799,7 @@ reagentc /enable
 | TPM 2.0 measurement failure | Windows Server 2012/2012 R2 | July 2024 update blocks mitigations; wait for firmware update |
 | Boot failure after Mitigation 3 | Various OEM systems | Check KB5025885 for specific models |
 | BitLocker recovery triggered | All TPM-based systems | Normal behavior; save recovery keys beforehand |
+| Hyper-V VM boot failure | Gen 2 VMs with old template | Update VM firmware settings |
 
 ### Common Problems
 
@@ -625,29 +827,40 @@ Get-EventLog -LogName System -Source "Secure-Boot-Update" -Newest 10
 3. Re-apply Mitigation 2 if needed
 4. Re-enable Secure Boot
 
-#### Problem: "Linux won't boot after Windows DBX update"
+#### Problem: "VM fails to boot after host update"
 
-**Cause**: Shim revoked in DBX.
+**Cause**: VM Secure Boot template mismatch.
+
+**Solution** (Hyper-V):
+```powershell
+# Check current template
+Get-VMFirmware -VMName "VMName" | Select-Object SecureBootTemplate
+
+# Set correct template
+Set-VMFirmware -VMName "VMName" -SecureBootTemplate "MicrosoftWindows"
+```
+
+#### Problem: "BitLocker recovery required after every boot"
+
+**Cause**: TPM PCR values changed by Secure Boot updates.
 
 **Solution**:
-```bash
-# Boot with Secure Boot disabled
-# Check shim version
-dpkg -l shim-signed  # Debian/Ubuntu
-rpm -q shim-x64      # RHEL/Fedora
+```powershell
+# Suspend BitLocker temporarily
+Suspend-BitLocker -MountPoint "C:" -RebootCount 3
 
-# Update shim
-sudo apt install --reinstall shim-signed
-# or
-sudo dnf reinstall shim-x64
-
-# Re-enable Secure Boot
+# Apply mitigations
+# BitLocker will re-seal to new PCR values after mitigations complete
+Resume-BitLocker -MountPoint "C:"
 ```
 
 ### Diagnostic Commands
 
 ```powershell
-# Windows - Check all Secure Boot variables
+# Complete system information
+Get-ComputerInfo | Select-Object *SecureBoot*, *UEFI*, *Firmware*
+
+# Check all Secure Boot variables
 Get-SecureBootUEFI -Name PK
 Get-SecureBootUEFI -Name KEK
 Get-SecureBootUEFI -Name db
@@ -657,14 +870,9 @@ Get-SecureBootUEFI -Name dbx
 Get-WinEvent -LogName "Microsoft-Windows-Kernel-Boot/Operational" |
     Where-Object {$_.Message -like "*Secure Boot*"} |
     Select-Object -First 20
-```
 
-```bash
-# Linux - Comprehensive diagnostics
-bootctl status
-mokutil --sb-state
-efi-readvar
-journalctl -b | grep -i "secure\|shim\|grub"
+# VM-specific diagnostics (run on VM)
+Get-WmiObject -Class Win32_ComputerSystem | Select-Object Model, Manufacturer
 ```
 
 ---
@@ -677,28 +885,17 @@ journalctl -b | grep -i "secure\|shim\|grub"
 - [How to manage Windows Boot Manager revocations for CVE-2023-24932](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d)
 - [Revoking vulnerable Windows boot managers](https://techcommunity.microsoft.com/blog/windows-itpro-blog/revoking-vulnerable-windows-boot-managers/4121735)
 
-### Linux Distribution Documentation
+### Virtual Machine Documentation
 
-- [Ubuntu Secure Boot Documentation](https://documentation.ubuntu.com/security/security-features/platform-protections/secure-boot/)
-- [Red Hat Secure Boot Article](https://access.redhat.com/articles/5991201)
-- [Debian SecureBoot Wiki](https://wiki.debian.org/SecureBoot)
-- [Arch Linux UEFI Secure Boot](https://wiki.archlinux.org/title/Unified_Extensible_Firmware_Interface/Secure_Boot)
+- [Hyper-V Secure Boot](https://docs.microsoft.com/en-us/windows-server/virtualization/hyper-v/learn-more/generation-2-virtual-machine-security-settings-for-hyper-v)
+- [Azure Trusted Launch](https://docs.microsoft.com/en-us/azure/virtual-machines/trusted-launch)
+- [VMware Secure Boot](https://docs.vmware.com/en/VMware-vSphere/7.0/com.vmware.vsphere.security.doc/GUID-898217D4-689D-4EB5-866C-888353FE241C.html)
+- [AWS Nitro UEFI Secure Boot](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/uefi-secure-boot.html)
 
 ### Community Resources
 
 - [GARYTOWN ConfigMgr Scripts](https://garytown.com/powershell-script-kb5025885-how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932)
 - [AJ's Tech Chatter - BlackLotus Remediation](https://anthonyfontanez.com/index.php/2025/05/18/dealing-with-cve-2023-24932-aka-remediating-blacklotus/)
-
-### Security Research
-
-- [Eclypsium - Shim Vulnerabilities](https://eclypsium.com/blog/the-real-shim-shady-how-cve-2023-40547-impacts-most-linux-systems/)
-- [UEFI Forum Specifications](https://uefi.org/specifications)
-
-### Tools
-
-- **fwupd**: Linux firmware update daemon - https://fwupd.org/
-- **efitools**: Linux EFI tools - https://git.kernel.org/pub/scm/linux/kernel/git/jejb/efitools.git
-- **sbsigntool**: Secure Boot signing tool
 
 ---
 
@@ -721,13 +918,10 @@ Restart-Computer
 [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes) -match 'Windows UEFI CA 2023'
 ```
 
-### Linux - Update Secure Boot Components
+### Hyper-V - Check VM Secure Boot
 
-```bash
-# Debian/Ubuntu
-sudo apt update && sudo apt install --only-upgrade shim-signed grub-efi-amd64-signed
-# Apply DBX
-fwupdmgr update
+```powershell
+Get-VMFirmware -VMName "VMName" | Select-Object SecureBoot, SecureBootTemplate
 ```
 
 ---
@@ -741,16 +935,16 @@ fwupdmgr update
 | **KEK** | Key Exchange Key - authorizes changes to DB/DBX |
 | **PK** | Platform Key - root of trust for Secure Boot |
 | **PCA** | Product Certificate Authority |
-| **Shim** | First-stage bootloader for Linux Secure Boot |
-| **SBAT** | Secure Boot Advanced Targeting - flexible revocation mechanism |
 | **SVN** | Secure Version Number - prevents rollback attacks |
 | **WinRE** | Windows Recovery Environment |
+| **vTPM** | Virtual Trusted Platform Module |
+| **Trusted Launch** | Azure security feature with Secure Boot and vTPM |
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Last Updated:** 2026-01-28
 **Classification:** Internal Use
 **Review Cycle:** Quarterly until June 2026
 
-**Disclaimer:** This document is provided for informational purposes. Always test procedures in a non-production environment and consult official Microsoft and distribution documentation for the latest guidance.
+**Disclaimer:** This document is provided for informational purposes. Always test procedures in a non-production environment and consult official Microsoft documentation for the latest guidance.

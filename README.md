@@ -16,7 +16,8 @@ Secure Boot is a security standard that ensures devices boot using only trusted 
 ### CVE-2023-24932 and June 2026 Mitigation
 - [Executive Summary](CVE_2023_24932_MITIGATION_GUIDE.md#executive-summary)
 - [Windows Mitigation Procedures](CVE_2023_24932_MITIGATION_GUIDE.md#windows-mitigation-procedures)
-- [Linux Mitigation Procedures](CVE_2023_24932_MITIGATION_GUIDE.md#linux-mitigation-procedures)
+- [Virtual Machine Considerations](CVE_2023_24932_MITIGATION_GUIDE.md#virtual-machine-considerations)
+- [Windows Server Mitigation](CVE_2023_24932_MITIGATION_GUIDE.md#windows-server-mitigation)
 - [Enterprise Deployment Strategy](CVE_2023_24932_MITIGATION_GUIDE.md#enterprise-deployment-strategy)
 
 ### Certificate Management
