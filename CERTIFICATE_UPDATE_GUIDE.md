@@ -94,10 +94,8 @@ efi-readvar -v KEK -o KEK.esl
 efi-readvar -v db -o db.esl
 efi-readvar -v dbx -o dbx.esl
 
-# Export in various formats for compatibility
-for var in PK KEK db dbx; do
-    cert-to-efi-sig-list -g $(uuidgen) $var.der $var.esl
-done
+# Verify backup
+ls -lh *.esl
 
 # Document current state
 efi-readvar > current_state.txt
@@ -106,14 +104,15 @@ efi-readvar > current_state.txt
 #### Windows Method
 ```powershell
 # Run PowerShell as Administrator
-# Install required tools (Secure Boot PowerShell module)
 
-# Backup Secure Boot configuration
+# Check Secure Boot status
 Confirm-SecureBootUEFI
-Get-SecureBootPolicy | Out-File -FilePath "C:\SecureBoot-Backup\policy.txt"
 
-# Export certificates using firmware interface
-# Note: Certificate export may require vendor-specific tools
+# Note: Windows does not provide direct PowerShell commands to export
+# Secure Boot certificates. Use one of these methods:
+# 1. UEFI firmware interface to export certificates to USB
+# 2. Vendor-specific tools (Dell, HP, Lenovo management software)
+# 3. Boot to Linux and use efitools for backup
 ```
 
 ### 2. Create Recovery USB
@@ -241,8 +240,11 @@ sudo efi-updatevar -f PK.auth PK
 sudo mokutil --import db.crt
 # Reboot and complete MOK enrollment in firmware
 
-# Method C: Manual file placement (for some firmware)
-sudo cp db.auth /sys/firmware/efi/efivars/db-[GUID]
+# Method C: Manual file placement (for some firmware - ADVANCED)
+# WARNING: This method is dangerous and system-specific
+# Replace [GUID] with actual GUID: 8be4df61-93ca-11d2-aa0d-00e098032b8c for db
+# Example: db-8be4df61-93ca-11d2-aa0d-00e098032b8c
+# This method is NOT recommended - use Method A or B instead
 ```
 
 #### Append to Existing Database
@@ -298,8 +300,8 @@ Confirm-SecureBootUEFI
 # Get detailed information
 Get-SecureBootPolicy
 
-# Check certificate store
-certutil -store "SecureBoot"
+# Note: Secure Boot certificates are not in Windows certificate store
+# They must be viewed through UEFI firmware interface or by booting to Linux
 ```
 
 ### Test Boot Process
@@ -357,7 +359,16 @@ efi-readvar -v db
 # Navigate to backup directory
 cd ~/secureboot-backup/[date]
 
-# Restore certificates
+# Restore certificates (requires Setup Mode or signed .auth files)
+# If you have .auth (signed) files:
+sudo efi-updatevar -f PK.auth PK
+sudo efi-updatevar -f KEK.auth KEK
+sudo efi-updatevar -f db.auth db
+sudo efi-updatevar -f dbx.auth dbx
+
+# If you only have .esl files, first enter Setup Mode by clearing PK
+sudo efi-updatevar -c PK  # Or use firmware interface to clear PK
+# Then restore with .esl files
 sudo efi-updatevar -f PK.esl PK
 sudo efi-updatevar -f KEK.esl KEK
 sudo efi-updatevar -f db.esl db
@@ -367,9 +378,16 @@ sudo efi-updatevar -f dbx.esl dbx
 ### Scenario 3: Complete Reset
 
 ```bash
-# Enter Setup Mode
-# This clears PK, putting firmware in Setup Mode
-sudo efi-updatevar -f /dev/null PK
+# Enter Setup Mode by clearing PK
+# Method 1: Using efi-updatevar (if supported)
+sudo efi-updatevar -c PK
+
+# Method 2: If -c flag not available, try alternative
+# WARNING: /dev/null method is implementation-dependent
+# Prefer using firmware interface to clear PK
+
+# Note: Some systems require using firmware setup to delete PK
+# Navigate to: Security -> Secure Boot -> Clear All Keys
 
 # Restore factory default certificates
 # Usually available from firmware setup or manufacturer website
@@ -498,10 +516,14 @@ journalctl | grep -i "verification\|signature"
 # Check current mode
 efi-readvar -v SetupMode
 
-# If not in Setup Mode, clear PK
-sudo efi-updatevar -f /dev/null PK
+# If not in Setup Mode, clear PK to enter Setup Mode
+# Method 1: Use clear command (preferred)
+sudo efi-updatevar -c PK
 
-# Re-enroll certificates
+# Method 2: Use firmware interface
+# Reboot -> UEFI Setup -> Security -> Secure Boot -> Clear All Keys
+
+# Re-enroll certificates after entering Setup Mode
 ```
 
 #### Issue 3: Certificate Chain Errors
@@ -549,7 +571,15 @@ sha256sum /boot/efi/EFI/ubuntu/shimx64.efi
 ```bash
 # Complete system information
 bootctl status
-efi-readvar -v PK -v KEK -v db -v dbx
+
+# Read all UEFI variables
+efi-readvar
+
+# Read specific variables
+efi-readvar -v PK
+efi-readvar -v KEK
+efi-readvar -v db
+efi-readvar -v dbx
 
 # Check certificate details
 openssl x509 -in cert.crt -text -noout
