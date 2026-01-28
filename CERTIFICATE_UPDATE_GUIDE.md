@@ -297,8 +297,8 @@ efi-readvar -v db
 # Check Secure Boot status
 Confirm-SecureBootUEFI
 
-# Get detailed information
-Get-SecureBootPolicy
+# Get Secure Boot configuration (returns True/False)
+Get-SecureBootUEFI
 
 # Note: Secure Boot certificates are not in Windows certificate store
 # They must be viewed through UEFI firmware interface or by booting to Linux
