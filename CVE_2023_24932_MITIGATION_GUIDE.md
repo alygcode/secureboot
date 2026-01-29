@@ -1076,7 +1076,7 @@ $status.AvailableUpdates
 
 ### Configuration Manager (SCCM/ConfigMgr) Deployment
 
-Reference scripts available at: [garytown/ConfigMgr/Baselines/CVE-2023-24932](https://github.com/garytown/ConfigMgr)
+Reference scripts available at: [gwblok/garytown - BlackLotusKB5025885](https://github.com/gwblok/garytown/blob/master/BlackLotusKB5025885/readme.md)
 
 #### SCCM Collections for Targeting
 
@@ -2292,7 +2292,8 @@ Get-WmiObject -Class Win32_ComputerSystem | Select-Object Model, Manufacturer
 
 ### Community Resources
 
-- [GARYTOWN ConfigMgr Scripts](https://garytown.com/powershell-script-kb5025885-how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932)
+- [GARYTOWN BlackLotus KB5025885 Scripts (GitHub)](https://github.com/gwblok/garytown/blob/master/BlackLotusKB5025885/readme.md)
+- [GARYTOWN Blog - KB5025885 PowerShell Script](https://garytown.com/powershell-script-kb5025885-how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932)
 - [AJ's Tech Chatter - BlackLotus Remediation](https://anthonyfontanez.com/index.php/2025/05/18/dealing-with-cve-2023-24932-aka-remediating-blacklotus/)
 
 ---
