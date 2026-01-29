@@ -660,6 +660,321 @@ Get-Service -Name "MSSQLSERVER" | Select-Object Name, Status
 
 ## Enterprise Deployment Strategy
 
+### Deployment Method Selection Guide
+
+Choosing the right deployment method is critical for a successful rollout. The table below provides a quick comparison, followed by detailed guidance for each scenario.
+
+#### Quick Comparison Matrix
+
+| Method | Best For | BitLocker Handling | Rollback Control | Complexity | Recommended Priority |
+|--------|----------|-------------------|------------------|------------|---------------------|
+| **SCCM Task Sequence** | Full control, high-risk systems | **Built-in suspension** | Excellent | High | **1st Choice** (when available) |
+| **SCCM Compliance Baseline** | Automated compliance monitoring | Manual prerequisite | Good | Medium | Monitoring companion |
+| **SCCM Application** | Standard deployments | Via script | Good | Medium | 2nd Choice (SCCM environments) |
+| **Intune Win32 App** | Cloud-managed devices | Via script | Limited | Medium | 1st Choice (Intune-only) |
+| **Intune Proactive Remediation** | Compliance + auto-fix | Via script | Limited | Low | Monitoring + remediation |
+| **Intune PowerShell Script** | Simple deployments | Via script | None | Low | Quick deployments |
+| **GPO Startup Script** | On-premises, no SCCM/Intune | Via script | None | Low | Last resort |
+| **GPO Registry Preference** | Partial automation | **None** | None | Low | **Not recommended alone** |
+
+---
+
+#### Detailed Deployment Method Recommendations
+
+##### **1. SCCM Task Sequence - RECOMMENDED FOR CRITICAL SYSTEMS**
+
+**Why Task Sequence is often the best choice:**
+
+The SCCM Task Sequence method provides the **most comprehensive control** and is **strongly recommended** for:
+
+| Scenario | Why Task Sequence |
+|----------|-------------------|
+| **BitLocker-encrypted systems** | Built-in `Suspend-BitLocker` step with configurable reboot count prevents recovery key prompts |
+| **Production servers** | Granular step-by-step execution with checkpoints and rollback capability |
+| **Mission-critical workstations** | Pre-flight checks, verification steps, and conditional logic |
+| **Failover clusters** | Can integrate with cluster-aware updating and maintenance windows |
+| **Complex environments** | Supports multiple conditions, dependencies, and custom logic |
+| **Compliance requirements** | Full audit trail with task sequence execution history |
+
+**Key advantages of Task Sequence:**
+
+1. **BitLocker Integration**: The `Suspend-BitLocker -RebootCount 3` step is built into the sequence, ensuring BitLocker is suspended **before** any registry changes. Other methods require this as a prerequisite script.
+
+2. **Atomic Operations**: If any step fails, the sequence can halt, roll back, or notify administrators before causing boot issues.
+
+3. **Pre-flight Validation**: Built-in checks verify Secure Boot is enabled, Windows version is compatible, and firmware meets requirements.
+
+4. **Phased Execution**: Natural support for running M1M2, waiting for verification, then running M3M4 in a controlled manner.
+
+5. **State Capture**: Can store pre-mitigation state and automatically restore if issues occur.
+
+**When to choose Task Sequence:**
+```
+✅ You have SCCM/ConfigMgr infrastructure
+✅ Systems have BitLocker enabled
+✅ You need maximum control and visibility
+✅ Deploying to servers or critical workstations
+✅ You want built-in rollback capability
+✅ Compliance requires detailed audit trails
+```
+
+**When Task Sequence may be overkill:**
+```
+❌ Simple lab/test environments
+❌ Small number of devices (<50)
+❌ No SCCM infrastructure
+❌ Time-constrained with low-risk devices
+```
+
+---
+
+##### **2. SCCM Compliance Baseline - MONITORING & REPORTING**
+
+**Use Compliance Baselines for:**
+
+| Purpose | Description |
+|---------|-------------|
+| **Continuous monitoring** | Regularly checks mitigation status across fleet |
+| **Compliance reporting** | Generates reports for auditors and management |
+| **Auto-remediation** | Can trigger remediation scripts when non-compliant |
+| **Dashboard visibility** | Integrates with SCCM reporting and Power BI |
+
+**Best practice - Combine with Task Sequence:**
+```
+1. Deploy mitigations via Task Sequence (controlled rollout)
+2. Monitor compliance via Baseline (ongoing verification)
+3. Catch missed devices with Baseline auto-remediation
+```
+
+**Baseline alone is suitable for:**
+```
+✅ Environments where Task Sequence isn't feasible
+✅ Low-risk devices (non-production, non-critical)
+✅ Devices that may have missed initial deployment
+✅ Ongoing compliance verification after initial rollout
+```
+
+**Limitations of Baseline-only deployment:**
+```
+⚠️ BitLocker suspension is in remediation script (less reliable)
+⚠️ No step-by-step visibility during application
+⚠️ Less granular control over timing and sequence
+⚠️ Detection/remediation cycle can be slow (evaluation schedules)
+```
+
+---
+
+##### **3. SCCM Application Package - STANDARD DEPLOYMENT**
+
+**Use Application deployment when:**
+
+| Scenario | Reason |
+|----------|--------|
+| Familiar deployment model | IT team prefers application-based deployments |
+| Software Center availability | Users can self-service if approved |
+| Supersedence tracking | Track M1M2 → M3M4 as application versions |
+| Standard change management | Integrates with existing app deployment workflows |
+
+**Application deployment is appropriate for:**
+```
+✅ Organizations standardized on SCCM Application model
+✅ When Task Sequences are reserved for OS deployment only
+✅ Devices with standard configurations
+✅ When Software Center self-service is desired
+```
+
+**Considerations:**
+```
+⚠️ BitLocker handling is via install script (ensure it runs first)
+⚠️ Less visibility into individual steps vs Task Sequence
+⚠️ Detection method must be robust to avoid re-running
+```
+
+---
+
+##### **4. Intune Win32 App - CLOUD-MANAGED DEVICES**
+
+**Primary choice for Intune-managed environments:**
+
+| Scenario | Why Win32 App |
+|----------|---------------|
+| **Azure AD joined devices** | Native Intune deployment method |
+| **Co-managed with Intune workload** | When Software Updates workload is Intune |
+| **Remote/hybrid workforce** | Devices connect directly to Intune |
+| **Modern management** | Aligns with cloud-first strategy |
+
+**When to use Win32 App:**
+```
+✅ Intune is primary management platform
+✅ Devices are Azure AD joined or hybrid joined with Intune enrollment
+✅ No SCCM infrastructure or co-management with Intune workload
+✅ Need deployment tracking via Intune portal
+```
+
+**Important considerations:**
+```
+⚠️ BitLocker suspension is in install script (less atomic than TS)
+⚠️ Reboot handling: Configure "Device restart behavior" appropriately
+⚠️ Detection script must be accurate to prevent redeployment loops
+⚠️ Limited rollback capability compared to Task Sequence
+```
+
+**Intune deployment tip:**
+Configure the application with:
+- Device restart behavior: **Intune will force a mandatory device restart**
+- Or use **soft reboot (exit code 3010)** with user notification
+
+---
+
+##### **5. Intune Proactive Remediation - MONITOR + AUTO-FIX**
+
+**Use Proactive Remediation for:**
+
+| Purpose | Benefit |
+|---------|---------|
+| **Fleet-wide monitoring** | Runs on schedule across all devices |
+| **Self-healing** | Automatically fixes non-compliant devices |
+| **Compliance analytics** | Rich reporting in Endpoint Analytics |
+| **Low-touch operation** | Set and forget with dashboards |
+
+**Best practice - Combine approaches:**
+```
+1. Initial deployment via Win32 App (controlled rollout)
+2. Ongoing monitoring via Proactive Remediation
+3. Auto-remediation catches missed/new devices
+```
+
+**Proactive Remediation alone is suitable for:**
+```
+✅ Catching devices missed by initial deployment
+✅ New devices that need mitigation after enrollment
+✅ Ongoing compliance verification
+✅ Environments wanting minimal admin intervention
+```
+
+**Limitations:**
+```
+⚠️ Runs on schedule (not immediate like targeted deployment)
+⚠️ Less suitable for tightly controlled rollouts
+⚠️ BitLocker handling depends on remediation script quality
+```
+
+---
+
+##### **6. Intune PowerShell Script - SIMPLE DEPLOYMENT**
+
+**Use for:**
+- Quick deployment to small groups
+- Testing/pilot groups
+- Environments with simple requirements
+
+**Limitations:**
+```
+⚠️ Scripts run once and aren't re-evaluated
+⚠️ No built-in detection/rerun capability
+⚠️ Limited reporting (success/failure only)
+⚠️ No rollback mechanism
+```
+
+**Recommendation:** Use Win32 App or Proactive Remediation instead for production.
+
+---
+
+##### **7. GPO Deployment - TRADITIONAL ON-PREMISES**
+
+**Use GPO when:**
+```
+✅ No SCCM or Intune infrastructure
+✅ Traditional Active Directory environment
+✅ Simple deployment requirements
+✅ Limited management tooling
+```
+
+**GPO Method Comparison:**
+
+| GPO Method | Reliability | BitLocker | Recommendation |
+|------------|-------------|-----------|----------------|
+| **Startup Script** | Good | Via script | **Recommended GPO method** |
+| **Scheduled Task** | Good | Via script | Alternative to startup |
+| **Registry Preference** | Partial | **None** | **Not recommended alone** |
+
+**Why GPO Registry Preference is NOT recommended alone:**
+
+The GPO Registry Preference method **only sets the registry value** - it does NOT:
+- Suspend BitLocker (will cause recovery key prompts)
+- Trigger the scheduled task (mitigations won't apply)
+- Handle errors or verification
+
+**If using GPO, always use the Startup Script method** which includes:
+1. BitLocker suspension
+2. Registry modification
+3. Scheduled task trigger
+4. Logging for troubleshooting
+
+---
+
+#### Decision Flowchart
+
+Use this flowchart to select your deployment method:
+
+```
+                    ┌─────────────────────┐
+                    │  Do you have SCCM?  │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┴────────────────┐
+              │                                 │
+             YES                               NO
+              │                                 │
+              ▼                                 ▼
+    ┌─────────────────────┐         ┌─────────────────────┐
+    │ Are devices BitLocker│         │  Do you have Intune? │
+    │ encrypted or critical?│         └──────────┬──────────┘
+    └──────────┬──────────┘                      │
+               │                    ┌────────────┴────────────┐
+    ┌──────────┴──────────┐         │                         │
+    │                     │        YES                       NO
+   YES                   NO         │                         │
+    │                     │         ▼                         ▼
+    ▼                     ▼  ┌─────────────────┐    ┌─────────────────┐
+┌─────────────┐  ┌─────────────┐│ Win32 App for  │    │  GPO Startup    │
+│ TASK SEQUENCE │  │ Compliance   ││ deployment +   │    │  Script         │
+│ (Recommended)│  │ Baseline or  ││ Proactive      │    │                 │
+│              │  │ Application  ││ Remediation for│    │                 │
+│              │  │              ││ monitoring     │    │                 │
+└─────────────┘  └─────────────┘└─────────────────┘    └─────────────────┘
+```
+
+---
+
+#### Recommended Deployment Combinations
+
+**Enterprise with SCCM (Recommended):**
+| Phase | Method | Purpose |
+|-------|--------|---------|
+| Pilot | Task Sequence | Controlled testing with full visibility |
+| Production | Task Sequence | Phased rollout with BitLocker handling |
+| Monitoring | Compliance Baseline | Ongoing compliance verification |
+| Reporting | SCCM Reports | Executive dashboards and audit trails |
+
+**Cloud-First with Intune:**
+| Phase | Method | Purpose |
+|-------|--------|---------|
+| Pilot | Win32 App (targeted group) | Test deployment process |
+| Production | Win32 App (phased rings) | Controlled rollout |
+| Monitoring | Proactive Remediation | Ongoing compliance + auto-fix |
+| Reporting | Endpoint Analytics | Compliance dashboards |
+
+**Traditional On-Premises:**
+| Phase | Method | Purpose |
+|-------|--------|---------|
+| Pilot | Manual via PowerShell | Test commands |
+| Production | GPO Startup Script | Automated deployment |
+| Monitoring | PowerShell + scheduled task | Regular compliance checks |
+| Reporting | Custom scripts | Generate compliance reports |
+
+---
+
 ### Recommended Deployment Phases
 
 #### Phase 1: Assessment and Testing (Weeks 1-4)
