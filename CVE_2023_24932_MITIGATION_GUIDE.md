@@ -120,6 +120,13 @@ Microsoft will provide **at least six months advance notice** before the Enforce
 2. **Verify Secure Boot is enabled**: `Confirm-SecureBootUEFI`
 3. **Create full system backup** including recovery media
 4. **Document current firmware version** and boot configuration
+5. **Backup BitLocker recovery keys** (CRITICAL - before any mitigations):
+   ```cmd
+   manage-bde -protectors -get %systemdrive%
+   ```
+   Store the recovery key in a secure location (AD DS, Azure AD, or printed copy)
+6. **Check for known firmware issues** (see [Known Firmware Compatibility Issues](#known-firmware-compatibility-issues))
+7. **For Arm64 devices**: See [Arm64 Device Considerations](#arm64-device-considerations) below
 
 ### The Four Required Mitigations
 
@@ -213,6 +220,10 @@ For convenience, mitigations can be combined:
 | 0x280 | Mitigations 3 + 4 |
 
 **Recommended approach**: Apply 0x140 first, verify, then apply 0x280 separately.
+
+> **Note (per Microsoft KB5025885):** The mitigations are **interlocked** so they cannot be deployed in the incorrect order. Windows will enforce the proper sequence regardless of the registry value set. For example, attempting to apply Mitigation 3 before Mitigation 1 & 2 are complete will have no effect.
+>
+> **Update (May 2025):** Microsoft removed the mandatory double-restart requirement between steps. A single restart after setting the registry value and running the scheduled task is now sufficient.
 
 ### Update Windows Recovery Environment (WinRE)
 
@@ -2012,8 +2023,8 @@ mountvol s: /s
 Get-AuthenticodeSignature S:\EFI\Microsoft\Boot\bootmgfw.efi
 
 # 4. Verify DBX contains PCA2011 revocation (after Mitigation 3)
-$dbx = Get-SecureBootUEFI dbx
-# DBX is binary - use vendor tools for detailed inspection
+[System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI dbx).bytes) -match 'Microsoft Windows Production PCA 2011'
+# Should return True after Mitigation 3 is applied
 
 # 5. Check registry status
 Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" -Name "AvailableUpdates"
@@ -2149,8 +2160,47 @@ reagentc /enable
 |-------|------------------|------------|
 | TPM 2.0 measurement failure | Windows Server 2012/2012 R2 | July 2024 update blocks mitigations; wait for firmware update |
 | Boot failure after Mitigation 3 | Various OEM systems | Check KB5025885 for specific models |
-| BitLocker recovery triggered | All TPM-based systems | Normal behavior; save recovery keys beforehand |
+| BitLocker recovery triggered | All TPM-based systems | Normal behavior; save recovery keys beforehand using `manage-bde -protectors -get %systemdrive%` |
 | Hyper-V VM boot failure | Gen 2 VMs with old template | Update VM firmware settings |
+| **HP Sure Start** | HP devices with Sure Start | May require BIOS update; check HP support for compatibility |
+| **VMware ESXi** | VMs on VMware ESXi | Ensure VM hardware version supports Secure Boot; update VMware Tools |
+| **Arm64 non-Qualcomm** | Arm64 devices (non-Qualcomm) | Mitigations blocked by default; use `SkipDeviceCheck` registry (see below) |
+| **Arm64 Qualcomm** | Qualcomm-based Arm64 devices | Check for firmware updates from device OEM |
+
+### Arm64 Device Considerations
+
+Arm64 devices have special requirements for CVE-2023-24932 mitigations:
+
+#### Non-Qualcomm Arm64 Devices
+
+Microsoft blocks mitigations on non-Qualcomm Arm64 devices by default. To enable mitigations on these devices:
+
+```cmd
+:: Run as Administrator - ONLY for non-Qualcomm Arm64 devices
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v SkipDeviceCheck /t REG_DWORD /d 1 /f
+```
+
+**Warning**: Only use this on devices where you have confirmed compatibility with your hardware vendor.
+
+#### Qualcomm-Based Arm64 Devices
+
+Qualcomm-based Arm64 devices may have specific firmware requirements. Before applying mitigations:
+
+1. Check with the device OEM for firmware updates
+2. Verify Secure Boot compatibility with the specific Qualcomm chipset
+3. Test thoroughly in a pilot group before broad deployment
+
+#### Arm64 Verification
+
+```powershell
+# Check if device is Arm64
+$arch = (Get-WmiObject Win32_OperatingSystem).OSArchitecture
+Write-Host "Architecture: $arch"
+
+# Check processor
+$proc = (Get-WmiObject Win32_Processor).Name
+Write-Host "Processor: $proc"
+```
 
 ### Common Problems
 
@@ -2290,8 +2340,8 @@ Get-VMFirmware -VMName "VMName" | Select-Object SecureBoot, SecureBootTemplate
 
 ---
 
-**Document Version:** 1.1
-**Last Updated:** 2026-01-28
+**Document Version:** 1.2
+**Last Updated:** 2026-01-29
 **Classification:** Internal Use
 **Review Cycle:** Quarterly until June 2026
 
