@@ -10,7 +10,9 @@ Recovery procedures, known issues, and diagnostic commands.
 | Boot failure after Mitigation 3 | Various OEM systems | Check KB5025885 for specific models |
 | BitLocker recovery triggered | All TPM-based systems | Normal; save recovery keys beforehand |
 | Hyper-V VM boot failure | Gen 2 VMs with old template | Update VM firmware settings |
-| HP Sure Start | HP devices | May require BIOS update |
+| HP Sure Start blocks M1 | HP devices with Sure Start | Firmware update needed; see [HP firmware issues](#hp-firmware-issues) |
+| HP error 1795 on scheduled task | HP devices missing DB keys | BIOS does not include 2023 keys; use Windows-Led path after HP firmware update |
+| Dell BIOS reset removes 2023 keys | Dell devices after BIOS defaults reset | Re-apply BIOS update or use M1 via Windows |
 | VMware ESXi | VMs on ESXi | Ensure VM hardware version supports Secure Boot |
 | Arm64 non-Qualcomm | Non-Qualcomm Arm64 | Use `SkipDeviceCheck` registry (see below) |
 
@@ -155,6 +157,48 @@ Suspend-BitLocker -MountPoint "C:" -RebootCount 3
 Resume-BitLocker -MountPoint "C:"
 ```
 
+### Problem: HP device — error 1795 when running Secure Boot scheduled task
+
+**Cause:** HP BIOS does not include the Windows UEFI CA 2023 certificate. The scheduled task fails because the firmware cannot accept the new boot manager signed with a certificate not yet in the DB.
+
+**Solution:**
+1. Check for BIOS updates from HP that include the 2023 keys
+2. If no BIOS update available, apply Mitigation 1 first (0x40) to add the key via Windows, then proceed with M2-M4
+3. Monitor HP support pages for Sure Start firmware compatibility updates
+
+```powershell
+# Verify whether HP BIOS has the key
+$db = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes)
+if ($db -match 'Windows UEFI CA 2023') {
+    Write-Host "2023 key present - proceed with M2-M4"
+} else {
+    Write-Host "2023 key MISSING - apply M1 via Windows first (0x40)"
+}
+```
+
+### HP Firmware Issues
+
+HP devices with Sure Start may block the Secure Boot update process. Key details:
+
+- HP has been slower than Dell/Lenovo in shipping firmware with 2023 certificates
+- Sure Start devices have additional firmware validation that can interfere with DB updates
+- Error 1795 in Event Viewer (`system firmware returned an error`) is the most common symptom
+- HP has a specific exemption listed in Microsoft KB5025885
+
+**Recommended approach for HP fleets:**
+1. Use the Windows-Led path (M1-M4 via registry)
+2. Apply M1 (0x40) first, verify the key is in DB, then proceed
+3. Check HP support for BIOS updates per model
+
+### Problem: Dell BIOS reset removes 2023 certificate
+
+**Cause:** Resetting BIOS to factory defaults on some Dell platforms may remove the 2023 certificate if the device originally shipped before Dell added dual-certificate support.
+
+**Solution:**
+1. Re-apply the latest Dell BIOS update
+2. Or apply Mitigation 1 via Windows (0x40) as a fallback
+3. Avoid full BIOS resets on devices that have already been updated
+
 ### Problem: Arm64 device - mitigations blocked
 
 **Cause:** Microsoft blocks mitigations on non-Qualcomm Arm64 by default.
@@ -217,6 +261,9 @@ Use the provided verification script:
 | VM won't boot | Disable VM Secure Boot, apply mitigations inside |
 | Old boot media fails | Use updated media or disable Secure Boot |
 | Mitigations not applying | Check scheduled task ran, check event logs |
+| HP error 1795 | BIOS missing 2023 keys; apply M1 (0x40) via Windows first |
+| Dell keys gone after BIOS reset | Re-apply latest BIOS update or use M1 via Windows |
+| OEM firmware doesn't have 2023 keys | Use Windows-Led path (M1-M4) instead of firmware-led |
 
 ---
 

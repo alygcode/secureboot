@@ -5,14 +5,15 @@
 2. [Understanding the Threat Landscape](#understanding-the-threat-landscape)
 3. [How CVE-2023-24932 and Certificate Expiration Are Connected](#how-cve-2023-24932-and-certificate-expiration-are-connected)
 4. [Microsoft's Mitigation Timeline](#microsofts-mitigation-timeline)
-5. [Windows Mitigation Procedures](#windows-mitigation-procedures)
-6. [Virtual Machine Considerations](#virtual-machine-considerations)
-7. [Windows Server Mitigation](#windows-server-mitigation)
-8. [Enterprise Deployment Strategy](#enterprise-deployment-strategy)
-9. [Verification and Validation](#verification-and-validation)
-10. [Recovery Procedures](#recovery-procedures)
-11. [Known Issues and Troubleshooting](#known-issues-and-troubleshooting)
-12. [Resources and References](#resources-and-references)
+5. [Firmware-Led Mitigation: OEM BIOS Updates](#firmware-led-mitigation-oem-bios-updates-dellhplenovo)
+6. [Windows Mitigation Procedures](#windows-mitigation-procedures)
+7. [Virtual Machine Considerations](#virtual-machine-considerations)
+8. [Windows Server Mitigation](#windows-server-mitigation)
+9. [Enterprise Deployment Strategy](#enterprise-deployment-strategy)
+10. [Verification and Validation](#verification-and-validation)
+11. [Recovery Procedures](#recovery-procedures)
+12. [Known Issues and Troubleshooting](#known-issues-and-troubleshooting)
+13. [Resources and References](#resources-and-references)
 
 ---
 
@@ -109,6 +110,84 @@ Microsoft will provide **at least six months advance notice** before the Enforce
 - Windows Production PCA 2011 will be automatically added to DBX
 - Updates will be **programmatically enforced**
 - There will be **no option to disable** the revocations
+
+---
+
+## Firmware-Led Mitigation: OEM BIOS Updates (Dell/HP/Lenovo)
+
+### Overview
+
+Some OEMs ship BIOS/UEFI firmware updates that include the Windows UEFI CA 2023 and KEK 2K CA 2023 certificates natively. When present, the firmware handles Mitigation 1 (DB enrollment), simplifying the transition.
+
+### OEM Readiness
+
+| OEM | Status | Details |
+|-----|--------|---------|
+| **Dell** | Shipping since late 2024 | Dual-certificate strategy (2011 + 2023) on all sustaining platforms by end 2025. Both old and new images boot. No end date for dual support. |
+| **Lenovo** | Proactively included | Updated UEFI firmware across all systems. Transition without disabling Secure Boot. |
+| **HP** | Lagging | Many devices still ship 2011-only keys (as of mid-2025). Sure Start devices need specific BIOS updates. Error 1795 may appear when scheduled task tries to update DB. |
+
+### Firmware-Led Procedure
+
+**Step 1: Update BIOS to the latest OEM version**
+
+Dell:
+```cmd
+:: Dell Command Update
+dcu-cli.exe /applyUpdates -updateType=bios -reboot=enable
+```
+
+Lenovo:
+```cmd
+:: Lenovo System Update
+"C:\Program Files (x86)\Lenovo\System Update\tvsu.exe" /CM
+```
+
+**Step 2: Verify keys are in firmware**
+```powershell
+# Check for 2023 certificate in DB
+[System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes) -match 'Windows UEFI CA 2023'
+# Must return True
+
+# Check for 2023 KEK
+[System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI KEK).bytes) -match '2023'
+# Should return True
+```
+
+Or use the verification script:
+```powershell
+.\scripts\verification\Test-OEMFirmwareKeys.ps1
+```
+
+**Step 3: Apply remaining mitigations (M2-M4)**
+
+With M1 handled by firmware, apply the boot manager update:
+```cmd
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x100 /f
+```
+```powershell
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+shutdown /r /t 0
+```
+
+Then after updating boot media, apply revocation and SVN:
+```cmd
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x280 /f
+```
+```powershell
+Start-ScheduledTask -TaskName "\Microsoft\Windows\PI\Secure-Boot-Update"
+shutdown /r /t 0
+```
+
+> **Note:** You can use 0x140 even with firmware-delivered keys — Windows detects the DB already contains PCA2023 and only applies M2.
+
+### Important Considerations
+
+- **EoSL platforms** (End of Service Life before January 2026) may not receive BIOS updates with 2023 keys
+- **BIOS defaults reset** on some Dell platforms may remove the 2023 certificate if the device shipped before dual-cert support — re-apply the BIOS update
+- **HP Sure Start** devices may return error 1795 when running the scheduled task if the BIOS has not been updated with 2023 keys
+- **New 2023 certificates are valid for 15 years** (through 2038)
+- **Mixed fleets**: Use firmware-led for Dell/Lenovo, Windows-led (M1-M4) for HP and VMs
 
 ---
 

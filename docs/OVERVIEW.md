@@ -120,6 +120,34 @@ Microsoft will provide **at least six months advance notice** before the Enforce
 
 ---
 
+## Mitigation Paths
+
+There are two paths to transition devices to the 2023 Secure Boot certificates:
+
+### Path A: Windows-Led (Registry Mitigations)
+
+The standard approach using Windows Update and registry-driven mitigations (M1-M4). This works on any hardware and is the method described in Microsoft KB5025885.
+
+**Best for:** Mixed hardware fleets, VMs, devices without recent BIOS updates.
+
+### Path B: Firmware-Led (OEM BIOS Updates)
+
+Some OEMs ship BIOS/UEFI firmware updates that include the new 2023 certificates natively. When the firmware already contains the Windows UEFI CA 2023 and KEK 2K CA 2023, the transition is simplified — the new keys are present from first boot and no manual DB enrollment is needed.
+
+**Best for:** Homogeneous fleets of Dell or Lenovo hardware, new device deployments, environments where BIOS updates are already managed.
+
+#### OEM Firmware Readiness
+
+| OEM | 2023 Certificate Status | Notes |
+|-----|------------------------|-------|
+| **Dell** | Shipping since late 2024 on new platforms; all sustaining platforms by end of 2025 | Dual-certificate strategy (2011 + 2023). Check if both `Windows UEFI CA 2023` and `KEK 2K CA 2023` are present. |
+| **Lenovo** | Proactively included across all Lenovo systems | Updated UEFI firmware contains 2023 certificates. Transition without disabling Secure Boot. |
+| **HP** | Lagging — many devices still ship 2011-only keys | HP Sure Start devices may require specific BIOS updates. Check HP support for your model. |
+
+> **Important:** Even with firmware-delivered keys, you still need to deploy a 2023-signed boot manager (Mitigation 2) and eventually apply the DBX revocation (Mitigation 3) and SVN update (Mitigation 4). Firmware-led delivery of keys replaces Mitigation 1 only.
+
+---
+
 ## Quick Decision Guide
 
 ```
@@ -128,18 +156,19 @@ Is Secure Boot enabled?
 └── YES → What type of system?
     ├── Gen 1 VM / BIOS → No action required
     └── Gen 2 VM / UEFI / Physical
-        ├── Production system → Apply M1M2 now, M3M4 after media update
-        ├── Test/Dev system → Apply all mitigations for testing
-        └── Legacy system → Evaluate Secure Boot requirement
+        ├── Dell/Lenovo with recent BIOS? → Firmware-Led path (verify keys, then M2-M4)
+        ├── HP or older hardware? → Windows-Led path (M1-M4)
+        ├── Virtual machine? → Windows-Led path (M1-M4)
+        └── Legacy/EoSL system? → Evaluate Secure Boot requirement
 ```
 
 ---
 
 ## Next Steps
 
-1. **[Mitigation Procedures](MITIGATION_PROCEDURES.md)** - Step-by-step commands
+1. **[Mitigation Procedures](MITIGATION_PROCEDURES.md)** - Step-by-step commands (both paths)
 2. **[VM Guidance](VM_GUIDANCE.md)** - Hyper-V, VMware, Azure, AWS
-3. **[Enterprise Deployment](ENTERPRISE_DEPLOYMENT.md)** - SCCM, Intune, GPO
+3. **[Enterprise Deployment](ENTERPRISE_DEPLOYMENT.md)** - SCCM, Intune, GPO, and firmware-led strategies
 4. **[Troubleshooting](TROUBLESHOOTING.md)** - Recovery procedures and known issues
 
 ---

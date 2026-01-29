@@ -8,6 +8,7 @@ Deployment strategies and scripts for SCCM, Intune, and Group Policy environment
 
 | Method | Best For | BitLocker Handling | Rollback Control | Complexity |
 |--------|----------|-------------------|------------------|------------|
+| **Firmware-Led (OEM BIOS)** | Dell/Lenovo fleets | N/A (pre-boot) | N/A | Low |
 | **SCCM Task Sequence** | High-risk systems | Built-in suspension | Excellent | High |
 | **SCCM Compliance Baseline** | Automated monitoring | Manual prerequisite | Good | Medium |
 | **SCCM Application** | Standard deployments | Via script | Good | Medium |
@@ -45,13 +46,118 @@ Deployment strategies and scripts for SCCM, Intune, and Group Policy environment
 
 ---
 
+## Firmware-Led Deployment (OEM BIOS Updates)
+
+For organizations with Dell or Lenovo hardware, OEM BIOS updates that include the Windows UEFI CA 2023 and KEK 2K CA 2023 certificates natively can simplify the transition. The firmware delivers the 2023 keys at the BIOS level, eliminating the need for Mitigation 1 (DB enrollment via Windows).
+
+### OEM Readiness Summary
+
+| OEM | Status | Management Tool | Notes |
+|-----|--------|----------------|-------|
+| **Dell** | Shipping 2023 certs since late 2024; all sustaining platforms by end 2025 | Dell Command Update, SCCM driver packs | Dual-certificate strategy (2011 + 2023). No end date announced for dual support. |
+| **Lenovo** | Proactively included across all systems | Lenovo System Update, Thin Installer | Transition without disabling Secure Boot. |
+| **HP** | Many devices still 2011-only (as of mid-2025) | HP Sure Start, HP Client Management | Sure Start devices need specific BIOS updates. Check HP support per model. |
+
+### When to Use Firmware-Led
+
+```
+Use Firmware-Led when:
+  - Fleet is predominantly Dell or Lenovo
+  - BIOS management tools are already deployed (DCU, Thin Installer)
+  - You want to reduce the number of Windows-side registry steps
+  - New devices are being provisioned (keys present from factory)
+
+Use Windows-Led instead when:
+  - HP devices or mixed OEM fleet
+  - No BIOS management infrastructure
+  - Virtual machines (firmware keys managed by hypervisor)
+  - Devices at End of Service Life (may not get BIOS updates)
+```
+
+### Firmware-Led Deployment Strategy
+
+#### Phase 1: BIOS Inventory and Update
+
+1. **Inventory BIOS versions** across the fleet:
+
+```powershell
+# Collect OEM and BIOS info for fleet analysis
+$info = [PSCustomObject]@{
+    ComputerName = $env:COMPUTERNAME
+    Manufacturer = (Get-WmiObject Win32_ComputerSystem).Manufacturer
+    Model = (Get-WmiObject Win32_ComputerSystem).Model
+    BIOSVersion = (Get-WmiObject Win32_BIOS).SMBIOSBIOSVersion
+    BIOSDate = (Get-WmiObject Win32_BIOS).ReleaseDate
+}
+$info | ConvertTo-Json
+```
+
+2. **Deploy BIOS updates** using OEM tools:
+
+**Dell (via SCCM):**
+- Download Dell BIOS packages from Dell TechDirect
+- Create SCCM Application or Task Sequence step
+- Use Dell Command Update CLI: `dcu-cli.exe /applyUpdates -updateType=bios -reboot=enable`
+
+**Dell (via Intune):**
+- Package Dell Command Update as Win32 app
+- Or use Dell BIOS Update .exe with `/s /r` silent switches
+
+**Lenovo (via SCCM):**
+- Download from Lenovo Update Retriever
+- Use Thin Installer: `ThinInstaller.exe /CM /INCLUDEREBOOTPACKAGES 3`
+
+**Lenovo (via Intune):**
+- Package Lenovo System Update or Thin Installer as Win32 app
+- Or use Lenovo BIOS Update Utility with `/SILENT` switch
+
+3. **Verify keys after BIOS update**:
+
+```powershell
+.\scripts\verification\Test-OEMFirmwareKeys.ps1
+```
+
+#### Phase 2: Apply Remaining Mitigations (M2-M4)
+
+After BIOS updates are deployed and keys verified, apply the remaining Windows-side mitigations using any deployment method (SCCM, Intune, GPO):
+
+- **M2 only** (0x100) — Boot manager update
+- Then after boot media refresh: **M3 + M4** (0x280) — Revocation and SVN
+
+> **Tip:** You can safely use the combined 0x140 value even if M1 is firmware-delivered. Windows detects the existing DB entry and skips M1 automatically.
+
+#### Hybrid Fleet Strategy
+
+For organizations with mixed Dell/Lenovo and HP hardware:
+
+| Device Type | Strategy |
+|-------------|----------|
+| Dell (with 2023 BIOS) | Firmware-Led: BIOS update → verify keys → M2 → M3M4 |
+| Lenovo (with 2023 BIOS) | Firmware-Led: BIOS update → verify keys → M2 → M3M4 |
+| HP (2011-only BIOS) | Windows-Led: M1M2 via registry → M3M4 |
+| VMs (any hypervisor) | Windows-Led: M1M2 via registry → M3M4 |
+| EoSL devices | Windows-Led or evaluate retirement |
+
+Use SCCM collections or Intune dynamic groups to segment by manufacturer:
+
+```sql
+-- SCCM: Dell devices with 2023 keys (firmware-led candidates)
+select SMS_R_SYSTEM.ResourceID, SMS_R_SYSTEM.Name
+from SMS_R_System
+inner join SMS_G_System_COMPUTER_SYSTEM on SMS_G_System_COMPUTER_SYSTEM.ResourceID = SMS_R_System.ResourceId
+where SMS_G_System_COMPUTER_SYSTEM.Manufacturer LIKE "Dell%"
+```
+
+---
+
 ## Recommended Deployment Phases
 
 ### Phase 1: Assessment and Testing (Weeks 1-4)
 
 1. **Inventory**
-   - Document all hardware models
+   - Document all hardware models **and OEM manufacturer** (Dell, HP, Lenovo)
    - Identify firmware versions and Secure Boot status
+   - **Check OEM firmware for 2023 keys** (see `Test-OEMFirmwareKeys.ps1`)
    - Catalog boot media (ISO images, USB drives, PXE servers)
    - Identify all virtual machine platforms
 
@@ -323,6 +429,7 @@ Use `scripts/verification/Get-FleetMitigationReport.ps1` for collecting status a
 
 | Phase | Method | Purpose |
 |-------|--------|---------|
+| BIOS Update | Dell DCU / Lenovo TI | Firmware-led key delivery (Dell/Lenovo) |
 | Pilot | Task Sequence | Controlled testing |
 | Production | Task Sequence | Phased rollout with BitLocker handling |
 | Monitoring | Compliance Baseline | Ongoing verification |
@@ -332,6 +439,7 @@ Use `scripts/verification/Get-FleetMitigationReport.ps1` for collecting status a
 
 | Phase | Method | Purpose |
 |-------|--------|---------|
+| BIOS Update | Dell DCU / Lenovo SU (Win32 app) | Firmware-led key delivery (Dell/Lenovo) |
 | Pilot | Win32 App (targeted group) | Test deployment |
 | Production | Win32 App (phased rings) | Controlled rollout |
 | Monitoring | Proactive Remediation | Ongoing compliance |
@@ -345,6 +453,16 @@ Use `scripts/verification/Get-FleetMitigationReport.ps1` for collecting status a
 | Production | GPO Startup Script | Automated deployment |
 | Monitoring | Scheduled PowerShell | Regular compliance checks |
 | Reporting | Custom scripts | Generate compliance reports |
+
+### Firmware-Led (Dell/Lenovo Fleet)
+
+| Phase | Method | Purpose |
+|-------|--------|---------|
+| BIOS Update | OEM tool (DCU, Thin Installer) | Deliver 2023 keys via firmware |
+| Verify Keys | `Test-OEMFirmwareKeys.ps1` | Confirm keys present |
+| M2 Deployment | Any method (SCCM/Intune/GPO) | Boot manager update only |
+| Media Refresh | Manual or scripted | Update WinRE and boot ISOs |
+| M3M4 Deployment | Any method | Revocation + SVN (irreversible) |
 
 ---
 

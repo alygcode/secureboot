@@ -43,7 +43,8 @@ scripts/
 └── verification/            # Verification and reporting scripts
     ├── Verify-MitigationStatus.ps1    # Local status check
     ├── Get-FleetMitigationReport.ps1  # Fleet-wide reporting
-    └── Test-HyperV-VMs.ps1            # Hyper-V VM audit
+    ├── Test-HyperV-VMs.ps1            # Hyper-V VM audit
+    └── Test-OEMFirmwareKeys.ps1       # OEM firmware key check (Dell/HP/Lenovo)
 ```
 
 ## Critical Dates
@@ -61,7 +62,10 @@ Is Secure Boot enabled?
 ├── NO → No action required
 └── YES → What type of system?
     ├── Gen 1 VM / BIOS → No action required
-    └── Gen 2 VM / UEFI / Physical → Apply mitigations
+    └── Gen 2 VM / UEFI / Physical
+        ├── Dell/Lenovo with recent BIOS? → Firmware-Led path (verify keys, then M2-M4)
+        ├── HP or older hardware? → Windows-Led path (M1-M4)
+        └── Virtual machine? → Windows-Led path (M1-M4)
 ```
 
 ## Quick Reference Commands
