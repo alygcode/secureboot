@@ -185,7 +185,7 @@ Is Secure Boot enabled?
 
 - [GARYTOWN BlackLotus KB5025885 Scripts (GitHub)](https://github.com/gwblok/garytown/blob/master/BlackLotusKB5025885/readme.md)
 - [GARYTOWN Blog - KB5025885 PowerShell Script](https://garytown.com/powershell-script-kb5025885-how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932)
-
+- [AJ BlackLotus KB5025885 Scripts (GitHub)](https://github.com/ajf8729/BlackLotus/blob/main/README.md)
 ---
 
 ## Glossary
