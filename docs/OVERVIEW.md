@@ -82,17 +82,20 @@ The CVE work makes this break **controlled and testable**, instead of catastroph
 |-------|------|--------|
 | Initial Update | May 2023 | KB5025885 released with mitigations (disabled by default) |
 | Second Deployment | July 2024 | Additional mitigation options added |
-| Evaluation Period | Now - 2026 | Organizations test and deploy mitigations |
-| Enforcement Phase | No earlier than January 2026 | Automatic revocation begins |
+| Evaluation Period | 2024–2025 | Organizations test and deploy mitigations |
+| **Enforcement Begins** | **January 13, 2026 (KB5074109)** | **CFR rollout active — automatic certificate deployment started** |
 | Certificate Expiration | June-October 2026 | Old certificates expire |
 
-### Important: Enforcement Phase Warning
+### ⚠️ Enforcement Phase Is Now Active (Updated March 2026)
 
-Microsoft will provide **at least six months advance notice** before the Enforcement Phase begins. When enforcement starts:
+The "no earlier than January 2026" placeholder is **outdated**. The enforcement phase began with the **January 13, 2026 monthly update (KB5074109)** via a staged **Controlled Feature Rollout (CFR)** mechanism. This is not a single enforcement date — Microsoft is deploying the 2023 certificates automatically to eligible devices in waves based on update success signals.
 
-- Windows Production PCA 2011 will be automatically added to DBX
-- Updates will be **programmatically enforced**
-- There will be **no option to disable** the revocations
+Key facts:
+- Automatic certificate deployment is **active now**, not pending
+- The DBX revocation (CVE-2023-24932 track) and certificate expiration (June 2026 track) are **two overlapping but distinct processes** — both are now in motion
+- Devices that have not applied mitigations may begin receiving them automatically via Windows Update
+- **Windows Server** does not receive 2023 certificates via CFR — it requires **manual deployment** (see [Enterprise Deployment](ENTERPRISE_DEPLOYMENT.md))
+- **Windows 10 without ESU**: Windows 10 mainstream support ended October 2025. Devices not enrolled in Extended Security Updates receive no Windows Update at all and will **not** receive 2023 certificates through any automated channel
 
 ---
 
@@ -140,9 +143,9 @@ Some OEMs ship BIOS/UEFI firmware updates that include the new 2023 certificates
 
 | OEM | 2023 Certificate Status | Notes |
 |-----|------------------------|-------|
-| **Dell** | Shipping since late 2024 on new platforms; all sustaining platforms by end of 2025 | Dual-certificate strategy (2011 + 2023). Check if both `Windows UEFI CA 2023` and `KEK 2K CA 2023` are present. |
-| **Lenovo** | Proactively included across all Lenovo systems | Updated UEFI firmware contains 2023 certificates. Transition without disabling Secure Boot. |
-| **HP** | Lagging — many devices still ship 2011-only keys | HP Sure Start devices may require specific BIOS updates. Check HP support for your model. |
+| **Dell** | Complete for 14G/15G/16G PowerEdge by Dec 2025; **12G/13G will not receive updates (EoSL)** | Dual-certificate strategy. See [KB 000402373](https://www.dell.com/support/kbdoc/en-us/000402373) for min BIOS versions per model. NVIDIA Option ROM CA issue on PowerEdge — see Troubleshooting. |
+| **Lenovo** | **Rollout complete** across all systems | Lenovo Press [LP2353](https://lenovopress.lenovo.com/lp2353-updating-windows-boot-manager-and-winpe-windows-uefi-ca-2023-certificate) covers server/WinPE scenarios. |
+| **HP** | **BIOS F.26 (December 2025)** adds Windows UEFI CA 2023 to default DB | Sure Start devices still need this specific update. Additional certificate additions expected in future releases. |
 
 > **Important:** Even with firmware-delivered keys, you still need to deploy a 2023-signed boot manager (Mitigation 2) and eventually apply the DBX revocation (Mitigation 3) and SVN update (Mitigation 4). Firmware-led delivery of keys replaces Mitigation 1 only.
 
@@ -178,8 +181,12 @@ Is Secure Boot enabled?
 ### Microsoft Official Documentation
 
 - [Enterprise Deployment Guidance for CVE-2023-24932](https://support.microsoft.com/en-us/topic/enterprise-deployment-guidance-for-cve-2023-24932-88b8f034-20b7-4a45-80cb-c6049b0f9967)
-- [How to manage Windows Boot Manager revocations for CVE-2023-24932](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d)
-- [Revoking vulnerable Windows boot managers](https://techcommunity.microsoft.com/blog/windows-itpro-blog/revoking-vulnerable-windows-boot-managers/4121735)
+- [How to manage Windows Boot Manager revocations for CVE-2023-24932 (KB5025885)](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d)
+- [Secure Boot certificate updates guidance for IT professionals](https://support.microsoft.com/en-us/topic/secure-boot-certificate-updates-guidance-for-it-professionals-and-organizations-e2b43f9f-b424-42df-bc6a-8476db65ab2f)
+- [Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/secure-boot-playbook-for-certificates-expiring-in-2026/4469235)
+- [Windows Server Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windowsservernewsandbestpractices/windows-server-secure-boot-playbook-for-certificates-expiring-in-2026/4495789)
+- [Registry key updates for Secure Boot (IT-managed)](https://support.microsoft.com/en-us/topic/registry-key-updates-for-secure-boot-windows-devices-with-it-managed-updates-a7be69c9-4634-42e1-9ca1-df06f43f360d)
+- [Act now: Secure Boot certificates expire in June 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856)
 
 ### Community Resources
 

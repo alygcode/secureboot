@@ -6,15 +6,20 @@ Recovery procedures, known issues, and diagnostic commands.
 
 | Issue | Affected Systems | Resolution |
 |-------|------------------|------------|
-| TPM 2.0 measurement failure | Windows Server 2012/2012 R2 | Wait for firmware update from vendor |
+| TPM 2.0 measurement block (unresolved) | Windows Server 2012/2012 R2 | No confirmed fix published; contact Microsoft Support |
 | Boot failure after Mitigation 3 | Various OEM systems | Check KB5025885 for specific models |
 | BitLocker recovery triggered | All TPM-based systems | Normal; save recovery keys beforehand |
 | Hyper-V VM boot failure | Gen 2 VMs with old template | Update VM firmware settings |
-| HP Sure Start blocks M1 | HP devices with Sure Start | Firmware update needed; see [HP firmware issues](#hp-firmware-issues) |
-| HP error 1795 on scheduled task | HP devices missing DB keys | BIOS does not include 2023 keys; use Windows-Led path after HP firmware update |
+| HP Sure Start blocks M1 | HP devices without BIOS F.26+ | Update to BIOS F.26 (Dec 2025); see [HP firmware issues](#hp-firmware-issues) |
+| HP error 1795 on scheduled task | HP devices missing DB keys | BIOS does not include 2023 keys; update to F.26+ first |
 | Dell BIOS reset removes 2023 keys | Dell devices after BIOS defaults reset | Re-apply BIOS update or use M1 via Windows |
-| VMware ESXi | VMs on ESXi | Ensure VM hardware version supports Secure Boot |
-| Arm64 non-Qualcomm | Non-Qualcomm Arm64 | Use `SkipDeviceCheck` registry (see below) |
+| Dell 12G/13G PowerEdge — no BIOS update | 12th/13th Gen PowerEdge (EoSL) | No update coming; use Windows-Led M1-M4 or evaluate retirement |
+| Dell NVIDIA Option ROM CA split | PowerEdge with NVIDIA PCIe cards | Add Option ROM UEFI CA explicitly to DB; see [NVIDIA Option ROM issue](#nvidia-option-rom-ca-issue-dell-poweredge) |
+| **VMware VM boot failure after M3** | **VMware VMs with Secure Boot after DBX revocation** | **Known issue; Microsoft and VMware working on fix — see [VMware M3 issue](#vmware-vm-boot-failure-after-mitigation-3)** |
+| ARM64 Qualcomm — mitigations blocked | Qualcomm-based ARM64 devices | Block still active; OEM firmware fix required — `SkipDeviceCheck` does NOT apply |
+| ARM64 non-Qualcomm | Non-Qualcomm ARM64 | Use `SkipDeviceCheck` registry only after confirming compatibility |
+| Windows 10 (no ESU) — no 2023 certs | Windows 10 without Extended Security Updates | No automated fix possible; enroll in ESU or upgrade OS |
+| Post-Oct 2025 WinRE fails on un-updated systems | Systems without 2023 cert in DB trying to boot new media | Firmware must include 2023 cert before booting new WinRE under Secure Boot |
 
 ---
 
@@ -199,13 +204,70 @@ HP devices with Sure Start may block the Secure Boot update process. Key details
 2. Or apply Mitigation 1 via Windows (0x40) as a fallback
 3. Avoid full BIOS resets on devices that have already been updated
 
+### VMware VM Boot Failure After Mitigation 3
+
+**Cause:** VMware VMs with x86 processors and Secure Boot enabled fail to boot after the DBX revocation (Mitigation 3 / `0x80`) is applied. This is a known issue; Microsoft is working with VMware on a fix.
+
+**Current guidance:**
+- Do **not** apply Mitigation 3 to VMware environments until a fix is confirmed
+- Apply Mitigations 1 & 2 (Phase 1 / `0x140`) only
+- Monitor [Microsoft KB5025885](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d) for resolution status
+
+**Workaround if already applied:**
+1. Edit VM settings → VM Options → Boot Options
+2. Temporarily disable Secure Boot
+3. Boot the VM and investigate
+
+---
+
+### Bitpixie (CVE-2023-21563) — WinRE Patching Is Mandatory
+
+**Background:** CVE-2023-21563 ("Bitpixie"), demonstrated at 38C3 in December 2024 and actively exploited as of May 2025, allows BitLocker bypass by chaining a WinRE downgrade attack. An attacker chains an old, unpatched WinRE image to extract the BitLocker volume master key from memory.
+
+**Why this matters for CVE-2023-24932 remediation:**
+- An unpatched WinRE undermines the entire Secure Boot / BitLocker security posture
+- Applying CVE-2023-24932 mitigations without patching WinRE leaves BitLocker vulnerable
+- **WinRE patching is not optional** — it is a mandatory companion step
+
+**Mitigation:** Ensure WinRE is updated as part of every CVE-2023-24932 remediation cycle. See the [Between Phase 1 and Phase 2](MITIGATION_PROCEDURES.md#between-phase-1-and-phase-2) section.
+
+---
+
+### NVIDIA Option ROM CA Issue (Dell PowerEdge)
+
+**Cause:** Microsoft split UEFI CA 2011 into two 2023 CAs:
+- `Windows UEFI CA 2023` (signs Microsoft boot components)
+- `Microsoft Option ROM UEFI CA 2023` (signs third-party Option ROMs, including NVIDIA)
+
+After the DB update is applied, NVIDIA PCIe cards on Dell PowerEdge servers may fail to initialize under Secure Boot because the Option ROM CA is not automatically included in the DB update.
+
+**Symptoms:** NVIDIA GPU or NIC fails to initialize after Secure Boot DB update; system may fail to detect cards or present boot errors referencing UEFI driver signing.
+
+**Solution:** Explicitly add the `Microsoft Option ROM UEFI CA 2023` certificate to the Secure Boot DB. See [Dell KB 000420051](https://www.dell.com/support/kbdoc/en-us/000420051) for model-specific guidance.
+
+---
+
+### Windows Server 2012 / 2012 R2 — TPM 2.0 Measurement Block
+
+**Status: Unresolved as of March 2026.**
+
+The block introduced by the July 2024 update — preventing Mitigations 2 and 3 on Windows Server 2012/2012 R2 with TPM 2.0 — has **no confirmed public resolution**. A hotfix released ~July 15, 2024 addressed a TPM *driver recognition* issue, but this is distinct from the *measurement compatibility* block on Mitigations 2 and 3.
+
+Key facts:
+- Windows Server 2012 reached end of extended support October 2023
+- Windows Server 2012 R2 extended support ends October 2026 (ESU available)
+- These OS versions do not receive 2023 Secure Boot certificates via CFR regardless
+- Do **not** assume the TPM measurement block is resolved; contact Microsoft Support for current guidance on your specific build
+
+---
+
 ### Problem: Arm64 device - mitigations blocked
 
-**Cause:** Microsoft blocks mitigations on non-Qualcomm Arm64 by default.
+**Qualcomm ARM64 (block still active):** The `SkipDeviceCheck` registry override does **not** apply to Qualcomm ARM64 devices. Microsoft is coordinating with Qualcomm for a firmware fix. Wait for an OEM firmware update before applying mitigations on Qualcomm-based ARM64 devices.
 
-**Solution:**
+**Non-Qualcomm ARM64 only:**
 ```cmd
-:: Only for confirmed compatible non-Qualcomm Arm64 devices
+:: Only for NON-QUALCOMM ARM64 devices with confirmed OEM compatibility
 reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v SkipDeviceCheck /t REG_DWORD /d 1 /f
 ```
 

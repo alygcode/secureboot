@@ -160,6 +160,8 @@ Get-VM "VMName" | Get-AdvancedSetting -Name "firmware" | Select-Object Name, Val
 - Guest OS mitigations are independent of host
 - Update VMware Tools after applying mitigations
 
+> ⚠️ **Known Issue — Mitigation 3 causes boot failure on VMware VMs:** VMware VMs with x86 processors and Secure Boot enabled fail to boot after the DBX revocation (Mitigation 3 / `0x80`) is applied. This is an active known issue; Microsoft and VMware are working on a fix. **Do not apply Mitigation 3 in VMware environments until resolved.** Apply Phase 1 (`0x140`) only. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#vmware-vm-boot-failure-after-mitigation-3) for details.
+
 ### Recovery: VM Won't Boot
 
 1. Edit VM settings → VM Options → Boot Options

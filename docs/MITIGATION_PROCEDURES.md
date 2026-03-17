@@ -171,6 +171,8 @@ Get-AuthenticodeSignature S:\EFI\Microsoft\Boot\bootmgfw.efi | Select-Object -Ex
 
 ### Update Windows Recovery Environment (WinRE)
 
+> 🔴 **MANDATORY — NOT OPTIONAL:** WinRE patching is required. CVE-2023-21563 ("Bitpixie") — actively exploited as of May 2025 — allows BitLocker bypass by chaining a WinRE downgrade. An unpatched WinRE undermines the entire CVE-2023-24932 remediation. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#bitpixie-cve-2023-21563--winre-patching-is-mandatory) for details.
+
 ```powershell
 # Check WinRE status
 reagentc /info
@@ -187,10 +189,13 @@ reagentc /enable
 
 ### Update All Boot Media
 
-- [ ] Download latest Windows ISOs
+> ⚠️ **Both-direction incompatibility (new as of October 2025):** Post-October 2025 cumulative updates produce WinRE media signed with Windows UEFI CA 2023. Systems whose firmware DB has **not** been updated to include the 2023 certificate will **reject this newer media** under Secure Boot. The previously documented problem (old media failing after M3) and this new problem (new media failing on un-updated systems) now both exist. Keep firmware, WinRE, and boot media versions aligned.
+
+- [ ] Download latest Windows ISOs (post-Oct 2025 builds include 2023-signed WinRE)
 - [ ] Recreate USB installation drives
 - [ ] Update PXE/HTTP boot images
 - [ ] Update VM templates
+- [ ] **Verify firmware DB includes 2023 cert before booting updated media under Secure Boot**
 - [ ] Test boot from updated media on mitigated device
 
 ---
@@ -239,23 +244,47 @@ $status = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secure
 
 ## Registry Values Reference
 
-### Individual Mitigations
+### New Canonical Value (Updated 2026)
+
+Microsoft now documents `0x5944` as the **all-in-one deployment value** covering all required certificate deployment flags simultaneously. Set this value and let the scheduled task process it in stages across reboots:
+
+```cmd
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x5944 /f
+```
+
+The task runs every 12 hours, processes each flag in order, and clears bits as stages complete. Intermediate values (`0x4100`, `0x4000`) are normal during processing.
+
+### Individual and Combined Values
 
 | Value | Mitigation | Description |
 |-------|------------|-------------|
+| **0x5944** | **All (new canonical)** | **All-in-one deployment — recommended for managed deployments** |
 | 0x40 | M1 only | Add PCA2023 to DB |
 | 0x100 | M2 only | Update boot manager |
+| 0x140 | M1 + M2 | Phase 1 (safe) |
 | 0x80 | M3 only | DBX revocation (IRREVERSIBLE) |
 | 0x200 | M4 only | SVN update (IRREVERSIBLE) |
-
-### Combined Values (Recommended)
-
-| Value | Mitigations | Use Case |
-|-------|-------------|----------|
-| 0x140 | M1 + M2 | Phase 1 (safe) |
 | 0x280 | M3 + M4 | Phase 2 (irreversible) |
 
-> **Note (per Microsoft KB5025885):** The mitigations are **interlocked** so they cannot be deployed in the incorrect order. Windows will enforce the proper sequence regardless of the registry value set.
+### Monitoring Deployment Progress
+
+Two new registry keys track deployment state (available after applying updates):
+
+```powershell
+# Check deployment status
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" |
+    Select-Object AvailableUpdates, UEFICA2023Status, UEFICA2023Error
+```
+
+| `UEFICA2023Status` Value | Meaning |
+|--------------------------|---------|
+| `NotStarted` | No deployment attempted yet |
+| `InProgress` | Actively processing — reboots may still be needed |
+| `Updated` | All stages complete |
+
+If `UEFICA2023Error` is set, it contains the error code from the firmware. Event ID 1795 in the System log means the firmware rejected the certificate write — an OEM BIOS update is required.
+
+> **Note (per Microsoft KB5025885):** The mitigations are **interlocked** — Windows enforces the correct sequence regardless of the registry value set.
 
 ---
 

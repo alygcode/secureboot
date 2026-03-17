@@ -54,9 +54,9 @@ For organizations with Dell or Lenovo hardware, OEM BIOS updates that include th
 
 | OEM | Status | Management Tool | Notes |
 |-----|--------|----------------|-------|
-| **Dell** | Shipping 2023 certs since late 2024; all sustaining platforms by end 2025 | Dell Command Update, SCCM driver packs | Dual-certificate strategy (2011 + 2023). No end date announced for dual support. |
-| **Lenovo** | Proactively included across all systems | Lenovo System Update, Thin Installer | Transition without disabling Secure Boot. |
-| **HP** | Many devices still 2011-only (as of mid-2025) | HP Sure Start, HP Client Management | Sure Start devices need specific BIOS updates. Check HP support per model. |
+| **Dell** | 14G/15G/16G PowerEdge complete by Dec 2025. **12G/13G EoSL — no updates coming.** | Dell Command Update, SCCM driver packs | See [KB 000402373](https://www.dell.com/support/kbdoc/en-us/000402373) for min BIOS versions per model. Risk: "Expert Key Mode" in BIOS resets UEFI variables, erasing 2023 certs. NVIDIA Option ROM CA issue — see Troubleshooting. |
+| **Lenovo** | **Rollout complete** across all systems | Lenovo System Update, Thin Installer | [Lenovo Press LP2353](https://lenovopress.lenovo.com/lp2353-updating-windows-boot-manager-and-winpe-windows-uefi-ca-2023-certificate) covers server/WinPE scenarios. |
+| **HP** | **BIOS F.26 (December 2025)** adds Windows UEFI CA 2023 to default DB | HP Sure Start, HP Client Management | Sure Start devices must have F.26 or later before applying Windows-side mitigations. Additional cert additions expected in future BIOS releases. |
 
 ### When to Use Firmware-Led
 
@@ -342,6 +342,8 @@ All GPO scripts are in `scripts/gpo/`:
 
 ## Windows Server Considerations
 
+> ⚠️ **Windows Server is a separate deployment track.** Windows Server does **not** receive the 2023 Secure Boot certificates via the CFR (Controlled Feature Rollout) used for Windows clients. Manual deployment using dedicated tooling is required. Follow the [Windows Server Secure Boot playbook](https://techcommunity.microsoft.com/blog/windowsservernewsandbestpractices/windows-server-secure-boot-playbook-for-certificates-expiring-in-2026/4495789) published by Microsoft.
+
 ### Server Version Support
 
 | Server Version | Support Level | Notes |
@@ -349,7 +351,8 @@ All GPO scripts are in `scripts/gpo/`:
 | Windows Server 2022 | Full | Recommended |
 | Windows Server 2019 | Full | |
 | Windows Server 2016 | Partial | Some limitations |
-| Windows Server 2012 R2 | Limited | TPM measurement issues |
+| Windows Server 2012 R2 | Limited | TPM 2.0 measurement block unresolved — see below |
+| Windows Server 2012 | No CFR | ESU only; contact Microsoft Support for guidance |
 
 ### Failover Cluster Deployment
 
@@ -406,15 +409,20 @@ Get-VM | Where-Object State -eq 'Running' | Save-VM
 ### Registry Status Check
 
 ```powershell
-$status = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" -Name "AvailableUpdates" -ErrorAction SilentlyContinue
-$status.AvailableUpdates
+# Check all relevant keys (updated monitoring as of 2026)
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" |
+    Select-Object AvailableUpdates, UEFICA2023Status, UEFICA2023Error
 
-# Value meanings:
-# 0x000 = All mitigations complete
-# 0x040 = Mitigation 1 pending
-# 0x100 = Mitigation 2 pending
-# 0x080 = Mitigation 3 pending
-# 0x200 = Mitigation 4 pending
+# UEFICA2023Status values: NotStarted | InProgress | Updated
+# UEFICA2023Error: set if firmware rejected a certificate write (Event ID 1795)
+
+# AvailableUpdates meanings:
+# 0x0000 = All mitigations complete
+# 0x0040 = M1 pending (add DB cert)
+# 0x0100 = M2 pending (boot manager)
+# 0x0080 = M3 pending (DBX revocation)
+# 0x0200 = M4 pending (SVN update)
+# 0x4000/0x4100 = Intermediate CFR stage values (normal during processing)
 ```
 
 ### Fleet Reporting Script
