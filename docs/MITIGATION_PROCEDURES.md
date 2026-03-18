@@ -33,9 +33,9 @@ Some OEMs (Dell, Lenovo) ship BIOS updates that include the Windows UEFI CA 2023
 
 | OEM | Firmware Status | Action |
 |-----|----------------|--------|
-| **Dell** | Shipping 2023 certs since late 2024; all sustaining platforms by end 2025 | Update BIOS to latest version |
-| **Lenovo** | Proactively included across all systems | Update BIOS to latest version |
-| **HP** | Many devices still on 2011-only keys (as of mid-2025) | Use Windows-Led path instead |
+| **Dell** | 14G/15G/16G complete by Dec 2025; 12G/13G EoSL - no updates | Update BIOS to latest version |
+| **Lenovo** | Rollout complete across all systems | Update BIOS to latest version |
+| **HP** | BIOS F.26 (Dec 2025) adds 2023 cert | Update to BIOS F.26 or later |
 
 ### Step 1: Update BIOS to Latest Version
 

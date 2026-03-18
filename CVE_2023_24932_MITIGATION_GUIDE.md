@@ -99,17 +99,20 @@ The CVE work makes this break **controlled and testable**, instead of catastroph
 |-------|------|--------|
 | Initial Update | May 2023 | KB5025885 released with mitigations (disabled by default) |
 | Second Deployment | July 2024 | Additional mitigation options added |
-| Evaluation Period | Now - 2026 | Organizations test and deploy mitigations |
-| Enforcement Phase | No earlier than January 2026 | Automatic revocation begins |
+| Evaluation Period | 2024-2025 | Organizations test and deploy mitigations |
+| **Enforcement Begins** | **January 13, 2026 (KB5074109)** | **CFR rollout active — automatic certificate deployment started** |
 | Certificate Expiration | June-October 2026 | Old certificates expire |
 
-### Important: Enforcement Phase Warning
+### Enforcement Phase Is Now Active (Updated March 2026)
 
-Microsoft will provide **at least six months advance notice** before the Enforcement Phase begins. When enforcement starts:
+The "no earlier than January 2026" placeholder is **outdated**. The enforcement phase began with the **January 13, 2026 monthly update (KB5074109)** via a staged **Controlled Feature Rollout (CFR)** mechanism. This is not a single enforcement date — Microsoft is deploying the 2023 certificates automatically to eligible devices in waves based on update success signals.
 
-- Windows Production PCA 2011 will be automatically added to DBX
-- Updates will be **programmatically enforced**
-- There will be **no option to disable** the revocations
+Key facts:
+- Automatic certificate deployment is **active now**, not pending
+- The DBX revocation (CVE-2023-24932 track) and certificate expiration (June 2026 track) are **two overlapping but distinct processes** — both are now in motion
+- Devices that have not applied mitigations may begin receiving them automatically via Windows Update
+- **Windows Server** does not receive 2023 certificates via CFR — it requires **manual deployment** (see [Windows Server Mitigation](#windows-server-mitigation))
+- **Windows 10 without ESU**: Windows 10 mainstream support ended October 2025. Devices not enrolled in Extended Security Updates receive no Windows Update at all and will **not** receive 2023 certificates through any automated channel
 
 ---
 
@@ -123,9 +126,9 @@ Some OEMs ship BIOS/UEFI firmware updates that include the Windows UEFI CA 2023 
 
 | OEM | Status | Details |
 |-----|--------|---------|
-| **Dell** | Shipping since late 2024 | Dual-certificate strategy (2011 + 2023) on all sustaining platforms by end 2025. Both old and new images boot. No end date for dual support. |
-| **Lenovo** | Proactively included | Updated UEFI firmware across all systems. Transition without disabling Secure Boot. |
-| **HP** | Lagging | Many devices still ship 2011-only keys (as of mid-2025). Sure Start devices need specific BIOS updates. Error 1795 may appear when scheduled task tries to update DB. |
+| **Dell** | 14G/15G/16G complete by Dec 2025; **12G/13G will not receive updates (EoSL)** | Dual-certificate strategy (2011 + 2023). See [KB 000402373](https://www.dell.com/support/kbdoc/en-us/000402373) for min BIOS versions per model. NVIDIA Option ROM CA issue on PowerEdge — see [Known Issues](#known-firmware-compatibility-issues). |
+| **Lenovo** | **Rollout complete** across all systems | [Lenovo Press LP2353](https://lenovopress.lenovo.com/lp2353-updating-windows-boot-manager-and-winpe-windows-uefi-ca-2023-certificate) covers server/WinPE scenarios. |
+| **HP** | **BIOS F.26 (December 2025)** adds Windows UEFI CA 2023 to default DB | Sure Start devices must have F.26 or later before applying Windows-side mitigations. Additional cert additions expected in future BIOS releases. |
 
 ### Firmware-Led Procedure
 
@@ -183,9 +186,10 @@ shutdown /r /t 0
 
 ### Important Considerations
 
-- **EoSL platforms** (End of Service Life before January 2026) may not receive BIOS updates with 2023 keys
+- **Dell 12G/13G PowerEdge**: These platforms have reached End of Service Life (EoSL) and will **not** receive BIOS updates with 2023 keys. Use Windows-led M1-M4 or evaluate retirement.
 - **BIOS defaults reset** on some Dell platforms may remove the 2023 certificate if the device shipped before dual-cert support — re-apply the BIOS update
-- **HP Sure Start** devices may return error 1795 when running the scheduled task if the BIOS has not been updated with 2023 keys
+- **HP Sure Start** devices may return error 1795 when running the scheduled task if the BIOS has not been updated with 2023 keys — update to BIOS F.26 or later
+- **NVIDIA Option ROM CA issue (Dell PowerEdge)**: Microsoft split UEFI CA 2011 into two 2023 CAs. After the DB update, NVIDIA PCIe cards may fail to initialize. Explicitly add the `Microsoft Option ROM UEFI CA 2023` certificate. See [Known Issues](#known-firmware-compatibility-issues).
 - **New 2023 certificates are valid for 15 years** (through 2038)
 - **Mixed fleets**: Use firmware-led for Dell/Lenovo, Windows-led (M1-M4) for HP and VMs
 
@@ -291,6 +295,7 @@ For convenience, mitigations can be combined:
 
 | Value | Mitigations Applied |
 |-------|---------------------|
+| **0x5944** | **All (new canonical)** — All-in-one deployment value for managed deployments |
 | 0x40 | Mitigation 1 only (DB update) |
 | 0x100 | Mitigation 2 only (Boot manager) |
 | 0x140 | Mitigations 1 + 2 |
@@ -298,13 +303,41 @@ For convenience, mitigations can be combined:
 | 0x200 | Mitigation 4 only (SVN) |
 | 0x280 | Mitigations 3 + 4 |
 
-**Recommended approach**: Apply 0x140 first, verify, then apply 0x280 separately.
+**New Canonical Value (2026):** Microsoft now documents `0x5944` as the **all-in-one deployment value** covering all required certificate deployment flags simultaneously. Set this value and let the scheduled task process it in stages across reboots:
+
+```cmd
+reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v AvailableUpdates /t REG_DWORD /d 0x5944 /f
+```
+
+The task runs every 12 hours, processes each flag in order, and clears bits as stages complete. Intermediate values (`0x4100`, `0x4000`) are normal during processing.
+
+**Traditional approach**: Apply 0x140 first, verify, then apply 0x280 separately.
+
+### Monitoring Deployment Progress
+
+Two new registry keys track deployment state (available after applying updates):
+
+```powershell
+# Check deployment status
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Secureboot" |
+    Select-Object AvailableUpdates, UEFICA2023Status, UEFICA2023Error
+```
+
+| `UEFICA2023Status` Value | Meaning |
+|--------------------------|---------|
+| `NotStarted` | No deployment attempted yet |
+| `InProgress` | Actively processing — reboots may still be needed |
+| `Updated` | All stages complete |
+
+If `UEFICA2023Error` is set, it contains the error code from the firmware. Event ID 1795 in the System log means the firmware rejected the certificate write — an OEM BIOS update is required.
 
 > **Note (per Microsoft KB5025885):** The mitigations are **interlocked** so they cannot be deployed in the incorrect order. Windows will enforce the proper sequence regardless of the registry value set. For example, attempting to apply Mitigation 3 before Mitigation 1 & 2 are complete will have no effect.
 >
 > **Update (May 2025):** Microsoft removed the mandatory double-restart requirement between steps. A single restart after setting the registry value and running the scheduled task is now sufficient.
 
 ### Update Windows Recovery Environment (WinRE)
+
+> **MANDATORY — NOT OPTIONAL:** WinRE patching is required. CVE-2023-21563 ("Bitpixie") — actively exploited as of May 2025 — allows BitLocker bypass by chaining a WinRE downgrade. An unpatched WinRE undermines the entire CVE-2023-24932 remediation. See [Known Issues](#known-firmware-compatibility-issues) for details.
 
 WinRE must be updated **before** applying Mitigation 3:
 
@@ -321,6 +354,8 @@ reagentc /disable
 # Re-enable WinRE
 reagentc /enable
 ```
+
+> **Both-direction incompatibility (October 2025):** Post-October 2025 cumulative updates produce WinRE media signed with Windows UEFI CA 2023. Systems whose firmware DB has **not** been updated to include the 2023 certificate will **reject this newer media** under Secure Boot. The previously documented problem (old media failing after M3) and this new problem (new media failing on un-updated systems) now both exist. Keep firmware, WinRE, and boot media versions aligned.
 
 ---
 
@@ -619,6 +654,8 @@ aws ec2 run-instances \
 
 ## Windows Server Mitigation
 
+> **Windows Server is a separate deployment track.** Windows Server does **not** receive the 2023 Secure Boot certificates via the CFR (Controlled Feature Rollout) used for Windows clients. Manual deployment using dedicated tooling is required. Follow the [Windows Server Secure Boot playbook](https://techcommunity.microsoft.com/blog/windowsservernewsandbestpractices/windows-server-secure-boot-playbook-for-certificates-expiring-in-2026/4495789) published by Microsoft.
+
 ### Windows Server Version Support
 
 | Server Version | Mitigation Support | Notes |
@@ -626,15 +663,18 @@ aws ec2 run-instances \
 | Windows Server 2022 | Full support | Recommended |
 | Windows Server 2019 | Full support | |
 | Windows Server 2016 | Partial support | Some limitations |
-| Windows Server 2012 R2 | Limited | TPM measurement issues |
-| Windows Server 2012 | Limited | TPM 2.0 compatibility issues |
+| Windows Server 2012 R2 | Limited | TPM 2.0 measurement block unresolved — see below |
+| Windows Server 2012 | No CFR | ESU only; contact Microsoft Support for guidance |
 
 ### Known Issues with Older Servers
 
-**Windows Server 2012/2012 R2 with TPM 2.0**:
-- July 2024 updates block Mitigations #2 and #3
-- Due to TPM measurement compatibility issues
-- Wait for firmware updates from hardware vendor
+**Windows Server 2012/2012 R2 with TPM 2.0 — Unresolved as of March 2026**:
+- The block introduced by the July 2024 update — preventing Mitigations 2 and 3 on Windows Server 2012/2012 R2 with TPM 2.0 — has **no confirmed public resolution**
+- A hotfix released ~July 15, 2024 addressed a TPM *driver recognition* issue, but this is distinct from the *measurement compatibility* block on Mitigations 2 and 3
+- Windows Server 2012 reached end of extended support October 2023
+- Windows Server 2012 R2 extended support ends October 2026 (ESU available)
+- These OS versions do not receive 2023 Secure Boot certificates via CFR regardless
+- Do **not** assume the TPM measurement block is resolved; contact Microsoft Support for current guidance
 
 ### Server Core Installations
 
@@ -2237,14 +2277,41 @@ reagentc /enable
 
 | Issue | Affected Systems | Resolution |
 |-------|------------------|------------|
-| TPM 2.0 measurement failure | Windows Server 2012/2012 R2 | July 2024 update blocks mitigations; wait for firmware update |
+| TPM 2.0 measurement block (unresolved) | Windows Server 2012/2012 R2 | No confirmed fix published; contact Microsoft Support |
 | Boot failure after Mitigation 3 | Various OEM systems | Check KB5025885 for specific models |
 | BitLocker recovery triggered | All TPM-based systems | Normal behavior; save recovery keys beforehand using `manage-bde -protectors -get %systemdrive%` |
 | Hyper-V VM boot failure | Gen 2 VMs with old template | Update VM firmware settings |
-| **HP Sure Start** | HP devices with Sure Start | May require BIOS update; check HP support for compatibility |
-| **VMware ESXi** | VMs on VMware ESXi | Ensure VM hardware version supports Secure Boot; update VMware Tools |
+| **HP Sure Start blocks M1** | HP devices without BIOS F.26+ | Update to BIOS F.26 (Dec 2025); error 1795 means BIOS missing 2023 keys |
+| **VMware VM boot failure after M3** | VMware VMs with Secure Boot after DBX revocation | Known issue; Microsoft and VMware working on fix — do NOT apply M3 to VMware until resolved |
+| **Dell 12G/13G PowerEdge — no BIOS update** | 12th/13th Gen PowerEdge (EoSL) | No update coming; use Windows-Led M1-M4 or evaluate retirement |
+| **Dell NVIDIA Option ROM CA split** | PowerEdge with NVIDIA PCIe cards | Add Option ROM UEFI CA explicitly to DB; see [Dell KB 000420051](https://www.dell.com/support/kbdoc/en-us/000420051) |
 | **Arm64 non-Qualcomm** | Arm64 devices (non-Qualcomm) | Mitigations blocked by default; use `SkipDeviceCheck` registry (see below) |
-| **Arm64 Qualcomm** | Qualcomm-based Arm64 devices | Check for firmware updates from device OEM |
+| **Arm64 Qualcomm** | Qualcomm-based Arm64 devices | Block still active; OEM firmware fix required — `SkipDeviceCheck` does **NOT** apply |
+| **Windows 10 (no ESU) — no 2023 certs** | Windows 10 without Extended Security Updates | No automated fix possible; enroll in ESU or upgrade OS |
+| **Post-Oct 2025 WinRE fails on un-updated systems** | Systems without 2023 cert in DB trying to boot new media | Firmware must include 2023 cert before booting new WinRE under Secure Boot |
+
+### Bitpixie (CVE-2023-21563) — WinRE Patching Is Mandatory
+
+CVE-2023-21563 ("Bitpixie"), demonstrated at 38C3 in December 2024 and actively exploited as of May 2025, allows BitLocker bypass by chaining a WinRE downgrade attack. An attacker chains an old, unpatched WinRE image to extract the BitLocker volume master key from memory.
+
+**Why this matters for CVE-2023-24932 remediation:**
+- An unpatched WinRE undermines the entire Secure Boot / BitLocker security posture
+- Applying CVE-2023-24932 mitigations without patching WinRE leaves BitLocker vulnerable
+- **WinRE patching is not optional** — it is a mandatory companion step
+
+### VMware VM Boot Failure After Mitigation 3
+
+**Cause:** VMware VMs with x86 processors and Secure Boot enabled fail to boot after the DBX revocation (Mitigation 3 / `0x80`) is applied. This is an active known issue; Microsoft and VMware are working on a fix.
+
+**Current guidance:**
+- Do **not** apply Mitigation 3 to VMware environments until a fix is confirmed
+- Apply Mitigations 1 & 2 (Phase 1 / `0x140`) only
+- Monitor [Microsoft KB5025885](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d) for resolution status
+
+**Workaround if already applied:**
+1. Edit VM settings -> VM Options -> Boot Options
+2. Temporarily disable Secure Boot
+3. Boot the VM and investigate
 
 ### Arm64 Device Considerations
 
@@ -2263,7 +2330,9 @@ reg add HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Secureboot /v SkipDe
 
 #### Qualcomm-Based Arm64 Devices
 
-Qualcomm-based Arm64 devices may have specific firmware requirements. Before applying mitigations:
+> **Block still active:** The `SkipDeviceCheck` registry override does **not** apply to Qualcomm ARM64 devices. Microsoft is coordinating with Qualcomm for a firmware fix. Wait for an OEM firmware update before applying mitigations on Qualcomm-based ARM64 devices.
+
+Before applying mitigations (once firmware fix is available):
 
 1. Check with the device OEM for firmware updates
 2. Verify Secure Boot compatibility with the specific Qualcomm chipset
@@ -2362,8 +2431,18 @@ Get-WmiObject -Class Win32_ComputerSystem | Select-Object Model, Manufacturer
 ### Microsoft Official Documentation
 
 - [Enterprise Deployment Guidance for CVE-2023-24932](https://support.microsoft.com/en-us/topic/enterprise-deployment-guidance-for-cve-2023-24932-88b8f034-20b7-4a45-80cb-c6049b0f9967)
-- [How to manage Windows Boot Manager revocations for CVE-2023-24932](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d)
-- [Revoking vulnerable Windows boot managers](https://techcommunity.microsoft.com/blog/windows-itpro-blog/revoking-vulnerable-windows-boot-managers/4121735)
+- [How to manage Windows Boot Manager revocations for CVE-2023-24932 (KB5025885)](https://support.microsoft.com/en-us/topic/how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932-41a975df-beb2-40c1-99a3-b3ff139f832d)
+- [Secure Boot certificate updates guidance for IT professionals](https://support.microsoft.com/en-us/topic/secure-boot-certificate-updates-guidance-for-it-professionals-and-organizations-e2b43f9f-b424-42df-bc6a-8476db65ab2f)
+- [Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/secure-boot-playbook-for-certificates-expiring-in-2026/4469235)
+- [Windows Server Secure Boot playbook for certificates expiring in 2026](https://techcommunity.microsoft.com/blog/windowsservernewsandbestpractices/windows-server-secure-boot-playbook-for-certificates-expiring-in-2026/4495789)
+- [Registry key updates for Secure Boot (IT-managed)](https://support.microsoft.com/en-us/topic/registry-key-updates-for-secure-boot-windows-devices-with-it-managed-updates-a7be69c9-4634-42e1-9ca1-df06f43f360d)
+- [Act now: Secure Boot certificates expire in June 2026](https://techcommunity.microsoft.com/blog/windows-itpro-blog/act-now-secure-boot-certificates-expire-in-june-2026/4426856)
+
+### OEM References
+
+- [Dell KB 000402373 - Minimum BIOS versions for 2023 certificate](https://www.dell.com/support/kbdoc/en-us/000402373)
+- [Dell KB 000420051 - NVIDIA Option ROM UEFI CA 2023](https://www.dell.com/support/kbdoc/en-us/000420051)
+- [Lenovo Press LP2353 - Updating Windows Boot Manager with UEFI CA 2023](https://lenovopress.lenovo.com/lp2353-updating-windows-boot-manager-and-winpe-windows-uefi-ca-2023-certificate)
 
 ### Virtual Machine Documentation
 
@@ -2373,7 +2452,7 @@ Get-WmiObject -Class Win32_ComputerSystem | Select-Object Model, Manufacturer
 
 - [GARYTOWN BlackLotus KB5025885 Scripts (GitHub)](https://github.com/gwblok/garytown/blob/master/BlackLotusKB5025885/readme.md)
 - [GARYTOWN Blog - KB5025885 PowerShell Script](https://garytown.com/powershell-script-kb5025885-how-to-manage-the-windows-boot-manager-revocations-for-secure-boot-changes-associated-with-cve-2023-24932)
-- [AJ's Tech Chatter - BlackLotus Remediation](https://anthonyfontanez.com/index.php/2025/05/18/dealing-with-cve-2023-24932-aka-remediating-blacklotus/)
+- [AJ BlackLotus KB5025885 Scripts (GitHub)](https://github.com/ajf8729/BlackLotus/blob/main/README.md)
 
 ---
 
